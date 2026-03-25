@@ -1210,34 +1210,26 @@ async function _refreshCalibStatus() {
       bar.innerHTML = chips.join('');
     }
 
-    // ── Camera selector buttons ─────────────────────────────────────────────────
-    const btnArea   = document.getElementById('calib-cam-buttons');
-    const manualRow = document.getElementById('calib-cam-manual');
-    const gameCams  = data.game_cams || [];
+    // ── Camera shortcut buttons (only when a game is active) ───────────────────
+    const btnArea  = document.getElementById('calib-cam-buttons');
+    const gameCams = data.game_cams || [];
 
     if (gameCams.length > 0) {
-      // Show one button per game camera, coloured by calibration state
       const savedIdx   = new Set(data.saved.map(c => c.cam_index));
       const pendingIdx = new Set(data.pending.map(c => c.cam_index));
+      btnArea.style.display = 'flex';
+      const allDone = gameCams.every(i => savedIdx.has(i) || pendingIdx.has(i));
       btnArea.innerHTML = gameCams.map(idx => {
         const done    = savedIdx.has(idx);
-        const pending = pendingIdx.has(idx);
-        const cls     = done ? 'calib-cam-btn done' : pending ? 'calib-cam-btn pending' : 'calib-cam-btn todo';
-        const icon    = done ? '✓' : pending ? '⏳' : '📷';
-        const label   = done ? `Cam ${idx} ✓` : pending ? `Cam ${idx} ⏳` : `Cam ${idx}`;
-        return `<button class="${cls}" onclick="calibOpenCameraIdx(${idx})">${icon} ${label}</button>`;
-      }).join('');
-      manualRow.style.display = 'none';
-
-      // All done banner
-      const allDone = gameCams.every(i => savedIdx.has(i) || pendingIdx.has(i));
-      btnArea.innerHTML += allDone
-        ? `<div class="calib-all-done">✅ Toutes les caméras sont calibrées — cliquez <strong>Sauvegarder</strong></div>`
-        : '';
+        const pend    = pendingIdx.has(idx);
+        const cls     = done ? 'calib-cam-btn done' : pend ? 'calib-cam-btn pending' : 'calib-cam-btn todo';
+        const icon    = done ? '✓' : pend ? '⏳' : '📷';
+        return `<button class="${cls}" onclick="calibOpenCameraIdx(${idx})">${icon} Cam ${idx}</button>`;
+      }).join('') + (allDone
+        ? `<div class="calib-all-done">✅ Toutes les caméras calibrées — cliquez Sauvegarder</div>`
+        : '');
     } else {
-      // No active game — fall back to manual index input
-      btnArea.innerHTML = '<span style="color:var(--dimmed);font-size:0.82rem">Aucune partie active — entrez l\'index manuellement.</span>';
-      manualRow.style.display = 'flex';
+      btnArea.style.display = 'none';
     }
 
     _updateSaveBtn();
