@@ -1241,6 +1241,31 @@ function calibOpenCameraIdx(idx) {
   calibOpenCamera();
 }
 
+async function calibProbeCameras() {
+  const btn = document.getElementById('calib-probe-btn');
+  const bar = document.getElementById('calib-probe-bar');
+  btn.disabled = true;
+  btn.textContent = '⏳ Détection…';
+  bar.style.display = 'none';
+  try {
+    const data = await apiCall('/api/calibration/probe-cameras');
+    if (!data.cameras.length) {
+      bar.innerHTML = '<span style="color:var(--red)">Aucune caméra détectée</span>';
+    } else {
+      bar.innerHTML = '<span style="color:var(--muted);font-size:0.82rem">Caméras disponibles :</span> '
+        + data.cameras.map(idx =>
+            `<button class="calib-cam-btn todo" onclick="calibOpenCameraIdx(${idx})">📷 /dev/video${idx}</button>`
+          ).join('');
+    }
+    bar.style.display = 'flex';
+  } catch (err) {
+    showToast(`Erreur détection: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔍 Détecter';
+  }
+}
+
 async function calibOpenCamera() {
   const idx = parseInt(document.getElementById('calib-cam-input').value);
   if (isNaN(idx)) { showToast('Index caméra invalide', 'error'); return; }

@@ -32,11 +32,15 @@
       <!-- Quick-access buttons when a game is active (filled by JS) -->
       <div id="calib-cam-buttons" class="calib-cam-buttons" style="display:none"></div>
 
+      <!-- Camera probe -->
+      <div id="calib-probe-bar" class="calib-probe-bar" style="display:none"></div>
+
       <!-- Manual input always available -->
       <div class="calib-choose-row">
         <label>Index caméra</label>
         <input type="number" id="calib-cam-input" value="0" min="0" max="20" style="width:80px" />
         <button class="ctrl-btn primary" onclick="calibOpenCamera()">📷 Ouvrir la caméra</button>
+        <button class="ctrl-btn" onclick="calibProbeCameras()" id="calib-probe-btn">🔍 Détecter</button>
         <div style="flex:1"></div>
         <button class="ctrl-btn success" onclick="closeCalibration()">✓ Terminer</button>
       </div>

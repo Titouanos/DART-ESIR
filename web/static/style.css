@@ -1422,6 +1422,20 @@ body {
 
 /* ═══════════════════════════════════════ CALIBRATION MODAL ═════════════ */
 
+#calib-modal.hidden { display: none; }
+
+.calib-probe-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
 .calib-card {
   width: 860px;
   max-width: 97vw;

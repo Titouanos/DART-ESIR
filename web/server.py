@@ -957,6 +957,36 @@ async def calib_close():
     return {"ok": True}
 
 
+@app.get("/api/calibration/probe-cameras")
+async def calib_probe_cameras():
+    """Probe /dev/videoX devices and return indexes that can actually deliver a frame.
+    On Linux only; returns all tried indexes on other platforms.
+    """
+    found: List[int] = []
+    if sys.platform == "linux":
+        import glob as _glob
+        candidates = sorted(
+            int(p.replace("/dev/video", ""))
+            for p in _glob.glob("/dev/video*")
+            if p[len("/dev/video"):].isdigit()
+        )
+    else:
+        candidates = list(range(10))
+
+    for idx in candidates:
+        try:
+            cap = cv2.VideoCapture(idx)
+            if cap.isOpened():
+                ok, _ = cap.read()
+                if ok:
+                    found.append(idx)
+            cap.release()
+        except Exception:
+            pass
+
+    return {"cameras": found}
+
+
 class CalibComputeRequest(BaseModel):
     cam_idx: int
     points: List[List[float]]   # 4 × [x, y] in *display* pixel space
