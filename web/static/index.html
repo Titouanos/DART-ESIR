@@ -37,6 +37,8 @@
         <label>Index caméra</label>
         <input type="number" id="calib-cam-input" value="0" min="0" max="20" style="width:80px" />
         <button class="ctrl-btn primary" onclick="calibOpenCamera()">📷 Ouvrir la caméra</button>
+        <div style="flex:1"></div>
+        <button class="ctrl-btn success" onclick="closeCalibration()">✓ Terminer</button>
       </div>
     </div>
 
@@ -111,10 +113,7 @@
 
       <div class="calib-preview-actions">
         <button class="ctrl-btn danger" onclick="calibBackToClick()">↩ Refaire les points</button>
-        <button class="ctrl-btn success" onclick="calibConfirm()">✅ Confirmer cette caméra</button>
-        <button class="ctrl-btn primary" id="calib-save-btn" onclick="calibSave()" style="display:none">
-          💾 Sauvegarder tout
-        </button>
+        <button class="ctrl-btn success" onclick="calibConfirm()">💾 Confirmer &amp; Sauvegarder</button>
       </div>
     </div>
 

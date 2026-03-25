@@ -1452,17 +1452,20 @@ async function _updateSaveBtn() {
   } catch {}
 }
 
-function calibConfirm() {
-  // Already stored on server (in pending buffer) by /compute
-  showToast('Caméra confirmée ✓ — vous pouvez calibrer la suivante ou sauvegarder', 'success');
-  _updateSaveBtn();
-  _refreshCalibStatus();
-  // Go back to choose step for next camera
+async function calibConfirm() {
+  // Save immediately after confirming — no separate Save step needed
+  try {
+    const data = await apiCall('/api/calibration/save', 'POST');
+    showToast(`✅ Cam ${calibCamIdx} sauvegardée (${data.total} caméra(s) au total)`, 'success');
+  } catch (err) {
+    showToast(`Erreur sauvegarde: ${err.message}`, 'error');
+  }
   calibPoints = [];
   calibLastPoints = null;
   const nextIdx = (calibCamIdx ?? 0) + 1;
   document.getElementById('calib-cam-input').value = nextIdx;
   _showCalibStep('choose');
+  _refreshCalibStatus();
 }
 
 function calibBackToClick() {
