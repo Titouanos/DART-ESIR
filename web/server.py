@@ -11,7 +11,9 @@ Features:
 """
 
 import asyncio
+import base64
 import json
+import math
 import sys
 import threading
 import time
@@ -656,6 +658,225 @@ async def on_shutdown():
     for cap in state.caps.values():
         cap.release()
     print("[INFO] DartVision Web Server stopped.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Calibration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Ideal target points in warped 800×800 space:
+# 20 = top, 6 = right, 3 = bottom, 11 = left  (outer wire)
+IDEAL_PTS = np.float32([
+    [config.WARP_CENTER, config.WARP_CENTER - config.WARP_RADIUS],
+    [config.WARP_CENTER + config.WARP_RADIUS, config.WARP_CENTER],
+    [config.WARP_CENTER, config.WARP_CENTER + config.WARP_RADIUS],
+    [config.WARP_CENTER - config.WARP_RADIUS, config.WARP_CENTER],
+])
+CALIB_LABELS = ["20 (haut)", "6 (droite)", "3 (bas)", "11 (gauche)"]
+CALIB_FACE_SEGMENTS = [3, 11, 20, 6]  # segment facing camera for each edge pair
+
+
+class CalibState:
+    def __init__(self):
+        self.cap: Optional[cv2.VideoCapture] = None
+        self.cam_idx: Optional[int] = None
+        self.frame_w: int = 0
+        self.frame_h: int = 0
+        self.raw_frame: Optional[bytes] = None
+        self.preview_frame: Optional[bytes] = None
+        self.frame_lock = threading.Lock()
+        self.streaming = False
+        self.thread: Optional[threading.Thread] = None
+        # Buffer of computed calibrations not yet saved to disk
+        self.pending: List[dict] = []
+
+    def stop(self):
+        self.streaming = False
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+        if self.cap:
+            self.cap.release()
+            self.cap = None
+        self.cam_idx = None
+        self.raw_frame = None
+        self.preview_frame = None
+
+
+calib = CalibState()
+
+
+def _calib_stream_loop():
+    """Background thread: grab raw frames for calibration streaming."""
+    while calib.streaming:
+        if calib.cap and calib.cap.isOpened():
+            ret, frame = calib.cap.read()
+            if ret:
+                calib.frame_w = frame.shape[1]
+                calib.frame_h = frame.shape[0]
+                with calib.frame_lock:
+                    calib.raw_frame = encode_jpeg(frame, quality=78)
+        time.sleep(1.0 / config.CAM_FPS)
+
+
+@app.post("/api/calibration/open/{cam_idx}")
+async def calib_open(cam_idx: int):
+    """Open one camera for calibration raw streaming."""
+    calib.stop()
+
+    cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW if sys.platform == "win32" else 0)
+    if not cap.isOpened():
+        cap = cv2.VideoCapture(cam_idx)
+    if not cap.isOpened():
+        raise HTTPException(404, f"Caméra {cam_idx} inaccessible")
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  config.CAM_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAM_HEIGHT)
+    cap.set(cv2.CAP_PROP_FPS,          config.CAM_FPS)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    for _ in range(10):          # flush stale buffer
+        cap.grab()
+
+    calib.cap = cap
+    calib.cam_idx = cam_idx
+    calib.frame_w = config.CAM_WIDTH
+    calib.frame_h = config.CAM_HEIGHT
+    calib.raw_frame = make_placeholder(cam_idx)
+    calib.streaming = True
+    calib.thread = threading.Thread(target=_calib_stream_loop, daemon=True,
+                                    name="calib-stream")
+    calib.thread.start()
+
+    return {"ok": True, "cam_idx": cam_idx,
+            "frame_w": config.CAM_WIDTH, "frame_h": config.CAM_HEIGHT}
+
+
+@app.post("/api/calibration/close")
+async def calib_close():
+    """Release calibration camera."""
+    calib.stop()
+    return {"ok": True}
+
+
+class CalibComputeRequest(BaseModel):
+    cam_idx: int
+    points: List[List[float]]   # 4 × [x, y] in *display* pixel space
+    display_w: float             # CSS width of the displayed image
+    display_h: float             # CSS height of the displayed image
+    segment: Optional[int] = None  # manual override for facing segment
+
+
+@app.post("/api/calibration/compute")
+async def calib_compute(req: CalibComputeRequest):
+    """Compute homography from 4 clicked points and return a warped preview."""
+    if len(req.points) != 4:
+        raise HTTPException(400, "Exactement 4 points requis")
+
+    # Scale from display coords → actual frame pixel coords
+    if calib.frame_w > 0 and req.display_w > 0:
+        sx = calib.frame_w / req.display_w
+        sy = calib.frame_h / req.display_h
+    else:
+        sx = sy = 1.0
+
+    src_pts = np.float32([[p[0] * sx, p[1] * sy] for p in req.points])
+    H, _ = cv2.findHomography(src_pts, IDEAL_PTS)
+    if H is None:
+        raise HTTPException(500, "Homographie impossible — vérifiez les 4 points")
+
+    # Auto-detect which segment the camera faces
+    pts = req.points
+    edge_dists = [
+        math.hypot(pts[i][0] - pts[(i+1) % 4][0], pts[i][1] - pts[(i+1) % 4][1])
+        for i in range(4)
+    ]
+    auto_seg = CALIB_FACE_SEGMENTS[edge_dists.index(max(edge_dists))]
+    segment  = req.segment if req.segment is not None else auto_seg
+
+    # Build preview: warp the current raw frame
+    preview_b64 = None
+    with calib.frame_lock:
+        raw = calib.raw_frame
+    if raw:
+        buf = np.frombuffer(raw, np.uint8)
+        frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        if frame is not None:
+            warped = cv2.warpPerspective(frame, H,
+                                         (config.WARP_SIZE, config.WARP_SIZE))
+            _, enc = cv2.imencode(".jpg", warped, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            preview_b64 = base64.b64encode(enc.tobytes()).decode()
+
+    # Store in pending buffer (replacing any previous entry for this cam)
+    calib.pending = [c for c in calib.pending if c["cam_index"] != req.cam_idx]
+    calib.pending.append({
+        "cam_index": req.cam_idx,
+        "points": [[p[0]*sx, p[1]*sy] for p in req.points],
+        "homography": H.tolist(),
+        "cam_position_segment": segment,
+    })
+
+    return {"ok": True, "segment": segment, "auto_segment": auto_seg,
+            "preview": preview_b64}
+
+
+@app.post("/api/calibration/save")
+async def calib_save():
+    """Merge pending calibrations with existing file and save."""
+    if not calib.pending:
+        raise HTTPException(400, "Aucune calibration en attente")
+
+    calib_file = ROOT / config.CALIB_FILE
+    existing: List[dict] = []
+    if calib_file.exists():
+        with open(calib_file) as f:
+            raw = json.load(f)
+        existing = raw if isinstance(raw, list) else []
+
+    new_ids = {c["cam_index"] for c in calib.pending}
+    merged  = [c for c in existing if c["cam_index"] not in new_ids]
+    merged += calib.pending
+
+    with open(calib_file, "w") as f:
+        json.dump(merged, f, indent=2)
+
+    saved = len(calib.pending)
+    calib.pending.clear()
+    return {"ok": True, "saved": saved, "total": len(merged)}
+
+
+@app.get("/api/calibration/status")
+async def calib_status():
+    """Return info about saved calibration file + pending cams."""
+    calib_file = ROOT / config.CALIB_FILE
+    saved: List[dict] = []
+    if calib_file.exists():
+        with open(calib_file) as f:
+            raw = json.load(f)
+        for c in (raw if isinstance(raw, list) else []):
+            saved.append({"cam_index": c["cam_index"],
+                          "segment": c.get("cam_position_segment")})
+    return {
+        "saved": saved,
+        "pending": [{"cam_index": c["cam_index"], "segment": c["cam_position_segment"]}
+                    for c in calib.pending],
+        "has_file": calib_file.exists(),
+    }
+
+
+@app.get("/camera/raw/{cam_idx}")
+async def raw_stream(cam_idx: int):
+    """Raw (un-warped) MJPEG stream used during calibration."""
+    placeholder = make_placeholder(cam_idx)
+
+    async def generate():
+        while True:
+            with calib.frame_lock:
+                frame = calib.raw_frame if calib.cam_idx == cam_idx else None
+            yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                   + (frame or placeholder) + b"\r\n")
+            await asyncio.sleep(1.0 / config.CAM_FPS)
+
+    return StreamingResponse(generate(),
+                             media_type="multipart/x-mixed-replace;boundary=frame")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

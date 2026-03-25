@@ -1170,6 +1170,208 @@ body {
 
 /* ═══════════════════════════════════════ KEYFRAMES ══════════════════════ */
 
+/* ═══════════════════════════════════════ CALIBRATION MODAL ═════════════ */
+
+.calib-card {
+  width: 860px;
+  max-width: 97vw;
+}
+
+.calib-step { display: flex; flex-direction: column; gap: 14px; }
+
+/* Status bar: already-calibrated cameras */
+.calib-status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  min-height: 40px;
+  align-items: center;
+}
+
+.calib-cam-chip {
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.calib-cam-chip.pending {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+.calib-choose-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.calib-choose-row label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.calib-choose-row input {
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+/* Progress steps */
+.calib-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+}
+
+.cp-step {
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--bg-panel);
+  transition: all 0.2s;
+}
+
+.cp-step.active {
+  border-color: var(--orange);
+  color: var(--orange);
+  background: rgba(210, 153, 34, 0.12);
+}
+
+.cp-step.done {
+  border-color: var(--green);
+  color: var(--green);
+  background: var(--green-dim);
+}
+
+.cp-arrow { color: var(--dimmed); }
+
+.calib-instruction {
+  font-size: 0.9rem;
+  padding: 10px 14px;
+  background: rgba(210, 153, 34, 0.1);
+  border: 1px solid rgba(210, 153, 34, 0.4);
+  border-radius: 8px;
+  color: var(--text);
+}
+
+/* Video + canvas overlay */
+.calib-video-wrap {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid var(--border);
+  background: #000;
+  max-height: 400px;
+}
+
+.calib-video-wrap img {
+  width: 100%;
+  display: block;
+  max-height: 400px;
+  object-fit: contain;
+}
+
+.calib-video-wrap canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  cursor: crosshair;
+}
+
+.calib-click-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Preview */
+.calib-preview-wrap {
+  display: flex;
+  gap: 16px;
+}
+
+.calib-preview-box {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.calib-preview-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+.calib-preview-box img {
+  width: 100%;
+  border-radius: 8px;
+  border: 2px solid var(--border);
+  background: #000;
+}
+
+.calib-preview-info {
+  font-size: 0.82rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.calib-preview-info strong { color: var(--green); }
+
+.calib-preview-info select {
+  padding: 4px 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.calib-preview-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* Setup calibration button */
+.btn-calib {
+  width: 100%;
+  padding: 11px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  margin-top: 6px;
+  transition: all 0.15s;
+}
+.btn-calib:hover { border-color: var(--orange); color: var(--orange); }
+
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.35; }

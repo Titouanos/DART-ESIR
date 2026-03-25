@@ -875,6 +875,311 @@ document.addEventListener('keydown', ev => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Calibration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const CALIB_LABELS   = ['20 (haut)', '6 (droite)', '3 (bas)', '11 (gauche)'];
+const CALIB_COLORS   = ['#FFD700', '#00E676', '#FF5252', '#40C4FF'];
+
+let calibPoints     = [];   // [{x, y}] in canvas display space
+let calibDisplayW   = 0;    // canvas CSS width at time of click
+let calibDisplayH   = 0;    // canvas CSS height at time of click
+let calibCamIdx     = null; // camera being calibrated
+let calibLastPoints = null; // saved for recompute with segment override
+
+function openCalibration() {
+  calibPoints = [];
+  calibLastPoints = null;
+  calibCamIdx = null;
+  _showCalibStep('choose');
+  document.getElementById('calib-modal').classList.remove('hidden');
+  _refreshCalibStatus();
+}
+
+function closeCalibration() {
+  document.getElementById('calib-modal').classList.add('hidden');
+  // Release camera if open
+  if (calibCamIdx !== null) {
+    apiCall('/api/calibration/close', 'POST').catch(() => {});
+    calibCamIdx = null;
+  }
+}
+
+function _showCalibStep(name) {
+  ['choose', 'click', 'preview'].forEach(s => {
+    document.getElementById(`calib-step-${s}`).style.display = s === name ? 'flex' : 'none';
+  });
+}
+
+async function _refreshCalibStatus() {
+  try {
+    const data = await apiCall('/api/calibration/status');
+    const bar = document.getElementById('calib-status-bar');
+    if (!data.saved.length && !data.pending.length) {
+      bar.innerHTML = '<span style="color:var(--dimmed);font-size:0.8rem">Aucune calibration enregistrée</span>';
+      return;
+    }
+    const chips = [
+      ...data.saved.map(c =>
+        `<span class="calib-cam-chip">✓ Cam ${c.cam_index} — seg ${c.segment ?? '?'}</span>`),
+      ...data.pending.map(c =>
+        `<span class="calib-cam-chip pending">⏳ Cam ${c.cam_index} — seg ${c.segment ?? '?'} (non sauvegardé)</span>`),
+    ];
+    bar.innerHTML = chips.join('') || '<span style="color:var(--dimmed)">—</span>';
+  } catch {}
+}
+
+async function calibOpenCamera() {
+  const idx = parseInt(document.getElementById('calib-cam-input').value);
+  if (isNaN(idx)) { showToast('Index caméra invalide', 'error'); return; }
+
+  try {
+    await apiCall(`/api/calibration/open/${idx}`, 'POST');
+    calibCamIdx = idx;
+    calibPoints = [];
+
+    // Switch to click step
+    _showCalibStep('click');
+    const img = document.getElementById('calib-stream-img');
+    img.src = `/camera/raw/${idx}?t=${Date.now()}`;
+
+    // Wait for img to load then sync canvas
+    img.onload = _syncCalibCanvas;
+    // Also sync on resize
+    new ResizeObserver(_syncCalibCanvas).observe(img);
+
+    _updateCalibProgress();
+    document.getElementById('calib-compute-btn').style.display = 'none';
+
+    // Attach click handler to canvas
+    const canvas = document.getElementById('calib-canvas');
+    canvas.onclick = _handleCalibClick;
+
+    showToast(`Caméra ${idx} ouverte — cliquez les 4 points`, 'info');
+  } catch (err) {
+    showToast(`Erreur: ${err.message}`, 'error');
+  }
+}
+
+function _syncCalibCanvas() {
+  const img    = document.getElementById('calib-stream-img');
+  const canvas = document.getElementById('calib-canvas');
+  const rect   = img.getBoundingClientRect();
+  canvas.width  = rect.width;
+  canvas.height = rect.height;
+  calibDisplayW = rect.width;
+  calibDisplayH = rect.height;
+  _drawCalibPoints();
+}
+
+function _handleCalibClick(ev) {
+  if (calibPoints.length >= 4) return;
+  const canvas = document.getElementById('calib-canvas');
+  const rect   = canvas.getBoundingClientRect();
+  calibPoints.push({ x: ev.clientX - rect.left, y: ev.clientY - rect.top });
+  calibDisplayW = rect.width;
+  calibDisplayH = rect.height;
+  _drawCalibPoints();
+  _updateCalibProgress();
+
+  if (calibPoints.length === 4) {
+    document.getElementById('calib-compute-btn').style.display = 'block';
+    document.getElementById('calib-instruction').innerHTML =
+      '✅ 4 points placés — cliquez <strong>Calculer l\'homographie</strong>';
+  }
+}
+
+function _drawCalibPoints() {
+  const canvas = document.getElementById('calib-canvas');
+  const ctx    = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Connection polygon
+  if (calibPoints.length > 1) {
+    ctx.beginPath();
+    calibPoints.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+    if (calibPoints.length === 4) ctx.closePath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // Points
+  calibPoints.forEach((p, i) => {
+    const color = CALIB_COLORS[i];
+
+    // Outer ring
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
+    ctx.fillStyle = color + '44';
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Center dot
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    // Label
+    ctx.font = 'bold 12px Arial, sans-serif';
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 3;
+    const lx = p.x + 14, ly = p.y - 8;
+    ctx.strokeText(CALIB_LABELS[i], lx, ly);
+    ctx.fillText(CALIB_LABELS[i], lx, ly);
+  });
+
+  // Next point indicator (pulsing crosshair hint)
+  if (calibPoints.length < 4) {
+    const n = calibPoints.length;
+    ctx.font = 'bold 13px Arial, sans-serif';
+    ctx.fillStyle = CALIB_COLORS[n];
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 3;
+    const hint = `${n + 1}. Cliquez ${CALIB_LABELS[n]}`;
+    ctx.strokeText(hint, 10, canvas.height - 12);
+    ctx.fillText(hint, 10, canvas.height - 12);
+  }
+}
+
+function _updateCalibProgress() {
+  const steps = document.querySelectorAll('.cp-step');
+  steps.forEach((el, i) => {
+    el.classList.remove('active', 'done');
+    if (i < calibPoints.length) el.classList.add('done');
+    else if (i === calibPoints.length) el.classList.add('active');
+  });
+
+  const n = calibPoints.length;
+  const instrEl = document.getElementById('calib-instruction');
+  const nextLbl = document.getElementById('calib-next-label');
+  if (n < 4 && instrEl && nextLbl) {
+    nextLbl.textContent = CALIB_LABELS[n];
+    instrEl.style.display = 'block';
+  } else if (instrEl) {
+    instrEl.style.display = 'none';
+  }
+}
+
+function calibUndo() {
+  if (!calibPoints.length) return;
+  calibPoints.pop();
+  document.getElementById('calib-compute-btn').style.display = 'none';
+  _drawCalibPoints();
+  _updateCalibProgress();
+}
+
+function calibReset() {
+  calibPoints = [];
+  document.getElementById('calib-compute-btn').style.display = 'none';
+  _drawCalibPoints();
+  _updateCalibProgress();
+  document.getElementById('calib-instruction').style.display = 'block';
+}
+
+async function calibCompute() {
+  if (calibPoints.length !== 4) return;
+  calibLastPoints = [...calibPoints];
+  await _doCompute();
+}
+
+async function calibRecompute() {
+  if (!calibLastPoints) return;
+  await _doCompute();
+}
+
+async function _doCompute() {
+  const btn = document.getElementById('calib-compute-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Calcul…'; }
+
+  const override = document.getElementById('calib-segment-override')?.value;
+
+  try {
+    const data = await apiCall('/api/calibration/compute', 'POST', {
+      cam_idx:   calibCamIdx,
+      points:    calibLastPoints.map(p => [p.x, p.y]),
+      display_w: calibDisplayW,
+      display_h: calibDisplayH,
+      segment:   override ? parseInt(override) : null,
+    });
+
+    // Show preview step
+    _showCalibStep('preview');
+    document.getElementById('calib-segment-detected').textContent =
+      `${data.segment} (auto: ${data.auto_segment})`;
+
+    // Raw snapshot: just grab the current stream frame as preview thumbnail
+    const rawImg = document.getElementById('calib-raw-snapshot');
+    rawImg.src = `/camera/raw/${calibCamIdx}?t=${Date.now()}`;
+
+    // Warped preview (base64)
+    if (data.preview) {
+      document.getElementById('calib-preview-img').src = 'data:image/jpeg;base64,' + data.preview;
+    }
+
+    // Show save button if pending calibrations exist
+    _updateSaveBtn();
+
+    showToast(`Homographie calculée — segment ${data.segment}`, 'success');
+  } catch (err) {
+    showToast(`Erreur: ${err.message}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Calculer l\'homographie'; }
+  }
+}
+
+async function _updateSaveBtn() {
+  try {
+    const data = await apiCall('/api/calibration/status');
+    const saveBtn = document.getElementById('calib-save-btn');
+    if (saveBtn) saveBtn.style.display = data.pending.length ? 'block' : 'none';
+  } catch {}
+}
+
+function calibConfirm() {
+  // Already stored on server (in pending buffer) by /compute
+  showToast('Caméra confirmée ✓ — vous pouvez calibrer la suivante ou sauvegarder', 'success');
+  _updateSaveBtn();
+  _refreshCalibStatus();
+  // Go back to choose step for next camera
+  calibPoints = [];
+  calibLastPoints = null;
+  const nextIdx = (calibCamIdx ?? 0) + 1;
+  document.getElementById('calib-cam-input').value = nextIdx;
+  _showCalibStep('choose');
+}
+
+function calibBackToClick() {
+  calibPoints = calibLastPoints ? [...calibLastPoints] : [];
+  _showCalibStep('click');
+  _syncCalibCanvas();
+  _updateCalibProgress();
+  document.getElementById('calib-compute-btn').style.display =
+    calibPoints.length === 4 ? 'block' : 'none';
+}
+
+async function calibSave() {
+  const btn = document.getElementById('calib-save-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Sauvegarde…';
+  try {
+    const data = await apiCall('/api/calibration/save', 'POST');
+    showToast(`💾 ${data.saved} caméra(s) sauvegardée(s) dans calibration.json`, 'success');
+    _refreshCalibStatus();
+    btn.style.display = 'none';
+  } catch (err) {
+    showToast(`Erreur: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Sauvegarder tout';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Initialization
 // ═══════════════════════════════════════════════════════════════════════════════
 
