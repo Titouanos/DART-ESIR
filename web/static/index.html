@@ -278,6 +278,7 @@
 
     <div style="flex:1"></div>
 
+    <button class="ctrl-btn" id="dbg-toggle-btn" onclick="toggleDebug()">🐛 Debug</button>
     <button class="ctrl-btn" onclick="openCalibration()">📐 Calibrer</button>
     <button class="ctrl-btn" onclick="showSetup()">⚙️ Nouvelle partie</button>
   </div>
@@ -374,6 +375,45 @@
     </div><!-- .modal-layout -->
   </div><!-- .modal-card -->
 </div><!-- #manual-modal -->
+
+<!-- ═══════════════════════════════════════════════════════ DEBUG PANEL ══════-->
+<div id="debug-panel" class="hidden">
+  <div class="dbg-header">
+    <span class="dbg-title">🐛 Debug</span>
+    <div class="dbg-header-actions">
+      <button class="dbg-pill" id="dbg-pause-log-btn" onclick="toggleDebugLog()">⏸ Log</button>
+      <button class="dbg-pill" onclick="clearDebugLog()">🗑 Vider</button>
+      <button class="dbg-pill danger" onclick="closeDebug()">✕</button>
+    </div>
+  </div>
+
+  <!-- Camera states + debug streams -->
+  <div class="dbg-section">
+    <div class="dbg-section-title">Caméras — État de détection</div>
+    <div class="dbg-cam-grid" id="dbg-cam-grid">
+      <!-- Populated by JS -->
+    </div>
+  </div>
+
+  <!-- Detection parameters (live sliders) -->
+  <div class="dbg-section">
+    <div class="dbg-section-title">
+      Paramètres de détection
+      <button class="dbg-pill" onclick="resetConfig()" style="margin-left:8px">↺ Défauts</button>
+    </div>
+    <div class="dbg-params-grid" id="dbg-params-grid">
+      <!-- Populated by JS -->
+    </div>
+  </div>
+
+  <!-- Event log -->
+  <div class="dbg-section dbg-log-section">
+    <div class="dbg-section-title">Journal d'événements</div>
+    <div class="dbg-log" id="dbg-log">
+      <div class="dbg-log-empty">En attente d'événements…</div>
+    </div>
+  </div>
+</div>
 
 <!-- ═══════════════════════════════════════════════════════ GAME OVER ════════-->
 <div id="game-over-overlay" class="hidden">

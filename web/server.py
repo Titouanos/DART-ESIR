@@ -98,6 +98,10 @@ class AppState:
 
 state = AppState()
 
+# Per-camera latest debug info (written by camera loop, read by debug stream)
+# {cam_idx: {"state", "diff_score", "contours", "tip", "ray", "mask", "all_tips"}}
+cam_debug_info: Dict[int, dict] = {}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Calibration Helpers
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -209,6 +213,17 @@ def _process_cameras():
 
         result = detector.process_frame(warped)
         state.cam_states[cam_idx] = result.get("state", "idle")
+
+        # Store debug snapshot for the debug stream
+        cam_debug_info[cam_idx] = {
+            "state":      result.get("state", "idle"),
+            "diff_score": result.get("diff_score", 0),
+            "contours":   result.get("contours", []),
+            "tip":        result.get("tip"),
+            "ray":        result.get("ray"),
+            "mask":       result.get("mask"),
+            "all_tips":   list(detector.all_detections),
+        }
 
         if result.get("tip") is not None:
             tip = result["tip"]
@@ -658,6 +673,186 @@ async def on_shutdown():
     for cap in state.caps.values():
         cap.release()
     print("[INFO] DartVision Web Server stopped.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Debug Stream & Live Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_STATE_COLORS = {
+    "idle":       (80,  80,  80),
+    "motion":     (0,  165, 255),
+    "confirming": (0,  220, 255),
+    "detected":   (0,  255,  60),
+    "cooldown":   (255, 140,  0),
+}
+
+
+def _draw_debug_overlay(warped: np.ndarray, dbg: dict, cam_idx: int) -> np.ndarray:
+    """Draw detection debug overlay on a warped frame copy."""
+    frame = warped.copy()
+    cx, cy = config.WARP_CENTER, config.WARP_CENTER
+    r = config.WARP_RADIUS
+
+    st = dbg.get("state", "idle")
+    color = _STATE_COLORS.get(st, (200, 200, 200))
+    diff  = int(dbg.get("diff_score", 0))
+
+    # Board outline circle
+    cv2.circle(frame, (cx, cy), r, (55, 55, 55), 1)
+    cv2.circle(frame, (cx, cy), int(r * config.BULL_RADIUS), (55, 55, 55), 1)
+
+    # Diff mask inset (top-left 130×130)
+    mask = dbg.get("mask")
+    if mask is not None:
+        try:
+            inset = cv2.resize(mask, (130, 130))
+            heat  = cv2.applyColorMap(inset, cv2.COLORMAP_HOT)
+            frame[4:134, 4:134] = heat
+            cv2.rectangle(frame, (3, 3), (135, 135), (80, 80, 80), 1)
+            cv2.putText(frame, "DIFF MASK", (6, 145),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (160, 160, 160), 1)
+        except Exception:
+            pass
+
+    # Contours (cyan)
+    contours = dbg.get("contours", [])
+    if contours:
+        cv2.drawContours(frame, contours, -1, (0, 255, 255), 1)
+
+    # Previous confirmed tips (green dots)
+    for tip in dbg.get("all_tips", []):
+        cv2.circle(frame, tip, 5, (0, 220, 0), -1)
+        cv2.circle(frame, tip, 9, (0, 180, 0), 1)
+
+    # Candidate ray (magenta line)
+    ray = dbg.get("ray")
+    if ray:
+        try:
+            p1 = (int(ray[0][0]), int(ray[0][1]))
+            p2 = (int(ray[1][0]), int(ray[1][1]))
+            cv2.line(frame, p1, p2, (255, 0, 255), 1, cv2.LINE_AA)
+        except Exception:
+            pass
+
+    # Candidate tip (yellow crosshair + circle)
+    tip = dbg.get("tip")
+    if tip:
+        cv2.drawMarker(frame, tip, (0, 255, 255),
+                       cv2.MARKER_CROSS, markerSize=24, thickness=2)
+        cv2.circle(frame, tip, 8, (0, 255, 255), 2)
+
+    # Status bar at bottom
+    bar_y = frame.shape[0] - 28
+    cv2.rectangle(frame, (0, bar_y - 4), (frame.shape[1], frame.shape[0]),
+                  (0, 0, 0), -1)
+    label = f"CAM {cam_idx}  |  {st.upper()}  |  diff={diff}"
+    cv2.putText(frame, label, (8, bar_y + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.52, color, 2, cv2.LINE_AA)
+
+    # Color bar on left edge indicating state
+    cv2.rectangle(frame, (0, 0), (5, frame.shape[0]), color, -1)
+
+    return frame
+
+
+@app.get("/camera/debug/{cam_idx}")
+async def camera_debug_stream(cam_idx: int):
+    """MJPEG stream with detection debug overlay (contours, ray, mask, tip…)."""
+    placeholder = make_placeholder(cam_idx)
+
+    async def generate():
+        while True:
+            with state.frame_lock:
+                raw_bytes = state.cam_frames.get(cam_idx)
+
+            frame_bytes = placeholder
+            if raw_bytes:
+                dbg = cam_debug_info.get(cam_idx, {})
+                try:
+                    buf   = np.frombuffer(raw_bytes, np.uint8)
+                    frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        annotated  = _draw_debug_overlay(frame, dbg, cam_idx)
+                        frame_bytes = encode_jpeg(annotated, quality=72)
+                except Exception:
+                    frame_bytes = raw_bytes
+
+            yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+                   + frame_bytes + b"\r\n")
+            await asyncio.sleep(1.0 / config.CAM_FPS)
+
+    return StreamingResponse(generate(),
+                             media_type="multipart/x-mixed-replace;boundary=frame")
+
+
+@app.get("/api/debug/cameras")
+async def debug_cameras():
+    """Return per-camera debug snapshot (state, diff, tip coords…)."""
+    result = {}
+    for cam_idx in state.cam_indexes:
+        dbg = cam_debug_info.get(cam_idx, {})
+        det = state.detectors.get(cam_idx)
+        result[str(cam_idx)] = {
+            "state":       dbg.get("state", "idle"),
+            "diff_score":  round(dbg.get("diff_score", 0), 1),
+            "tip":         list(dbg["tip"]) if dbg.get("tip") else None,
+            "contour_count": len(dbg.get("contours", [])),
+            "confirmed_tips": len(dbg.get("all_tips", [])),
+            "stable_count": det.stable_count if det else 0,
+            "cooldown":     det.cooldown     if det else 0,
+            "dart_count":   det.dart_count   if det else 0,
+        }
+    return result
+
+
+# ── Live parameter tuning ─────────────────────────────────────────────────────
+
+_TUNABLE_PARAMS = {
+    "DIFF_THRESHOLD":    (5,  120, int),
+    "MIN_DART_AREA":     (10, 500, int),
+    "MAX_DART_AREA":     (500, 30000, int),
+    "STABLE_FRAMES":     (2,  30,  int),
+    "COOLDOWN_FRAMES":   (5,  120, int),
+    "MIN_ELONGATION":    (1.0, 5.0, float),
+    "CONTOUR_GROUP_DIST":(5,  100, int),
+    "FUSION_AGREE_DIST": (5,  100, int),
+    "FUSION_WINDOW_MS":  (50, 2000, int),
+}
+
+
+@app.get("/api/config")
+async def get_config():
+    """Return current tunable detection parameters."""
+    return {
+        k: {"value": getattr(config, k), "min": v[0], "max": v[1], "type": v[2].__name__}
+        for k, v in _TUNABLE_PARAMS.items()
+    }
+
+
+class ConfigUpdateRequest(BaseModel):
+    params: Dict[str, float]
+
+
+@app.post("/api/config")
+async def update_config(req: ConfigUpdateRequest):
+    """Update one or more detection parameters at runtime."""
+    updated = {}
+    errors  = {}
+    for key, raw_val in req.params.items():
+        if key not in _TUNABLE_PARAMS:
+            errors[key] = "Paramètre inconnu"
+            continue
+        mn, mx, typ = _TUNABLE_PARAMS[key]
+        val = typ(raw_val)
+        if val < mn or val > mx:
+            errors[key] = f"Hors plage [{mn}, {mx}]"
+            continue
+        setattr(config, key, val)
+        updated[key] = val
+
+    await _broadcast({"type": "config_updated", "params": updated})
+    return {"ok": True, "updated": updated, "errors": errors}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

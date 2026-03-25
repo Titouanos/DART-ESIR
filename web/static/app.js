@@ -247,6 +247,7 @@ function handleMessage(data) {
       if (data.cam_states)  updateCamStates(data.cam_states);
       if (data.current_player) updateCurrentPlayer(data.current_player, data.scoreboard);
       handleDetectionMsg(data);
+      _dbgOnDetection(data);
       break;
 
     case 'undo':
@@ -256,6 +257,7 @@ function handleMessage(data) {
       clearDartMarker();
       updateLastThrowBar(null);
       showToast('↩ Lancer annulé', 'info');
+      dbgLog('undo', 'Lancer annulé');
       break;
 
     case 'next_turn':
@@ -264,6 +266,7 @@ function handleMessage(data) {
       if (data.current_player) updateCurrentPlayer(data.current_player, data.scoreboard);
       clearDartMarker();
       showToast(`⏭ Tour suivant — ${data.current_player}`, 'info');
+      dbgLog('system', `Tour suivant → ${data.current_player}`);
       break;
 
     case 'reference_captured':
@@ -273,6 +276,21 @@ function handleMessage(data) {
     case 'detection_paused':
       detectionPaused = data.paused;
       break;
+
+    case 'config_updated':
+      Object.entries(data.params || {}).forEach(([k, v]) => dbgLog('config', `${k} = ${v}`));
+      break;
+  }
+}
+
+function _dbgOnDetection(data) {
+  if (!debugOpen) return;
+  const gr  = data.game_result || {};
+  const src = data.source === 'manual' ? '[manuel]' : `[${data.fusion_method ?? '?'}]`;
+  if (gr.bust) {
+    dbgLog('bust', `${gr.player} BUST — ${data.label} (${data.score}pts) ${src}`);
+  } else {
+    dbgLog('detection', `${gr.player ?? '?'}: ${data.label} ${data.score}pts ${src} cams=[${(data.fusion_cams||[]).join(',')}] conf=${data.fusion_confidence != null ? (data.fusion_confidence*100).toFixed(0)+'%' : '?'} tip=${data.tip_px ? `(${data.tip_px[0]},${data.tip_px[1]})` : '—'}`);
   }
 }
 
@@ -873,6 +891,267 @@ document.addEventListener('keydown', ev => {
       break;
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Debug Panel
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let debugOpen      = false;
+let debugLogPaused = false;
+let debugPollTimer = null;
+let debugStreamMode = {};   // cam_idx -> 'normal' | 'debug'
+let configDefaults  = {};   // original values from server
+
+function toggleDebug() {
+  debugOpen = !debugOpen;
+  const panel = document.getElementById('debug-panel');
+  const btn   = document.getElementById('dbg-toggle-btn');
+  if (debugOpen) {
+    panel.classList.remove('hidden');
+    btn.style.borderColor = 'var(--orange)';
+    btn.style.color = 'var(--orange)';
+    _initDebugPanel();
+    _startDebugPoll();
+    dbgLog('system', 'Panneau debug ouvert');
+  } else {
+    closeDebug();
+  }
+}
+
+function closeDebug() {
+  debugOpen = false;
+  document.getElementById('debug-panel').classList.add('hidden');
+  const btn = document.getElementById('dbg-toggle-btn');
+  if (btn) { btn.style.borderColor = ''; btn.style.color = ''; }
+  _stopDebugPoll();
+}
+
+// ── Debug camera cards ─────────────────────────────────────────────────────────
+
+async function _initDebugPanel() {
+  await _buildCamCards();
+  await _buildParamSliders();
+}
+
+async function _buildCamCards() {
+  const grid = document.getElementById('dbg-cam-grid');
+  grid.innerHTML = '';
+
+  if (!openCamIndexes.length) {
+    grid.innerHTML = '<div style="color:var(--dimmed);font-size:0.8rem">Aucune caméra active</div>';
+    return;
+  }
+
+  openCamIndexes.forEach(idx => {
+    debugStreamMode[idx] = 'normal';
+    const card = document.createElement('div');
+    card.className = 'dbg-cam-card';
+    card.id = `dbg-cam-${idx}`;
+    card.innerHTML = `
+      <div class="dbg-cam-stream-wrap" id="dbg-stream-wrap-${idx}" onclick="toggleDebugStream(${idx})">
+        <img id="dbg-stream-img-${idx}" src="/camera/${idx}" alt="cam ${idx}" />
+        <span class="dbg-stream-label" id="dbg-stream-lbl-${idx}">normal</span>
+      </div>
+      <div class="dbg-cam-info">
+        <div class="dbg-cam-name">CAM ${idx}</div>
+        <div class="dbg-cam-rows" id="dbg-cam-rows-${idx}">
+          <div class="dbg-row"><span class="dbg-key">état</span>
+            <span class="dbg-val" id="dbg-state-${idx}">—</span></div>
+          <div class="dbg-row"><span class="dbg-key">diff score</span>
+            <span class="dbg-val" id="dbg-diff-${idx}">—</span></div>
+          <div class="dbg-row"><span class="dbg-key">contours</span>
+            <span class="dbg-val" id="dbg-ctr-${idx}">—</span></div>
+          <div class="dbg-row"><span class="dbg-key">tip (px)</span>
+            <span class="dbg-val" id="dbg-tip-${idx}">—</span></div>
+          <div class="dbg-row"><span class="dbg-key">stable cnt</span>
+            <span class="dbg-val" id="dbg-stab-${idx}">—</span></div>
+          <div class="dbg-row"><span class="dbg-key">cooldown</span>
+            <span class="dbg-val" id="dbg-cool-${idx}">—</span></div>
+          <div class="dbg-row"><span class="dbg-key">total lancers</span>
+            <span class="dbg-val" id="dbg-darts-${idx}">—</span></div>
+        </div>
+        <button class="dbg-stream-toggle" id="dbg-stream-btn-${idx}" onclick="toggleDebugStream(${idx})">
+          🔍 Activer overlay debug
+        </button>
+      </div>`;
+    grid.appendChild(card);
+  });
+}
+
+function toggleDebugStream(idx) {
+  const isDebug = debugStreamMode[idx] === 'debug';
+  debugStreamMode[idx] = isDebug ? 'normal' : 'debug';
+
+  const img = document.getElementById(`dbg-stream-img-${idx}`);
+  const lbl = document.getElementById(`dbg-stream-lbl-${idx}`);
+  const btn = document.getElementById(`dbg-stream-btn-${idx}`);
+
+  const src = debugStreamMode[idx] === 'debug'
+    ? `/camera/debug/${idx}?t=${Date.now()}`
+    : `/camera/${idx}`;
+  if (img) img.src = src;
+  if (lbl) lbl.textContent = debugStreamMode[idx];
+  if (btn) {
+    btn.textContent  = debugStreamMode[idx] === 'debug' ? '📷 Vue normale' : '🔍 Activer overlay debug';
+    btn.className    = `dbg-stream-toggle ${debugStreamMode[idx] === 'debug' ? 'active' : ''}`;
+  }
+
+  // Also update the main camera feed in the left panel
+  const mainImg = document.querySelector(`#cam-box-${idx} img`);
+  if (mainImg) mainImg.src = src;
+}
+
+// ── Parameter sliders ──────────────────────────────────────────────────────────
+
+async function _buildParamSliders() {
+  const grid = document.getElementById('dbg-params-grid');
+  grid.innerHTML = '<div style="color:var(--dimmed);font-size:0.75rem">Chargement…</div>';
+
+  try {
+    const cfg = await apiCall('/api/config');
+    configDefaults = {};
+    grid.innerHTML = '';
+
+    Object.entries(cfg).forEach(([key, info]) => {
+      configDefaults[key] = info.value;
+      const step = info.type === 'float' ? 0.1 : 1;
+      const row = document.createElement('div');
+      row.className = 'dbg-param-row';
+      row.innerHTML = `
+        <span class="dbg-param-name" title="${key}">${key}</span>
+        <input type="range" class="dbg-param-slider" id="slider-${key}"
+               min="${info.min}" max="${info.max}" step="${step}" value="${info.value}"
+               oninput="onSliderInput('${key}', this.value)" />
+        <span class="dbg-param-val" id="val-${key}">${info.value}</span>`;
+      grid.appendChild(row);
+    });
+  } catch (err) {
+    grid.innerHTML = `<div style="color:var(--red);font-size:0.75rem">Erreur: ${escHtml(err.message)}</div>`;
+  }
+}
+
+let _sliderDebounce = {};
+function onSliderInput(key, rawVal) {
+  document.getElementById(`val-${key}`).textContent = rawVal;
+  clearTimeout(_sliderDebounce[key]);
+  _sliderDebounce[key] = setTimeout(() => _applyParam(key, rawVal), 350);
+}
+
+async function _applyParam(key, val) {
+  try {
+    const data = await apiCall('/api/config', 'POST', { params: { [key]: parseFloat(val) } });
+    if (data.errors && data.errors[key]) {
+      showToast(`Paramètre ${key}: ${data.errors[key]}`, 'error');
+    } else {
+      dbgLog('config', `${key} = ${val}`);
+    }
+  } catch (err) {
+    showToast(`Erreur config: ${err.message}`, 'error');
+  }
+}
+
+async function resetConfig() {
+  if (!Object.keys(configDefaults).length) return;
+  try {
+    await apiCall('/api/config', 'POST', { params: configDefaults });
+    // Reset sliders
+    Object.entries(configDefaults).forEach(([key, val]) => {
+      const sl = document.getElementById(`slider-${key}`);
+      const vl = document.getElementById(`val-${key}`);
+      if (sl) sl.value = val;
+      if (vl) vl.textContent = val;
+    });
+    dbgLog('system', 'Paramètres réinitialisés aux valeurs par défaut');
+    showToast('Paramètres réinitialisés', 'info');
+  } catch {}
+}
+
+// ── Debug polling ──────────────────────────────────────────────────────────────
+
+function _startDebugPoll() {
+  _stopDebugPoll();
+  debugPollTimer = setInterval(_pollDebugCameras, 500);
+}
+
+function _stopDebugPoll() {
+  clearInterval(debugPollTimer);
+  debugPollTimer = null;
+}
+
+async function _pollDebugCameras() {
+  if (!debugOpen || !openCamIndexes.length) return;
+  try {
+    const data = await apiCall('/api/debug/cameras');
+    Object.entries(data).forEach(([idx, info]) => {
+      _updateCamDebugCard(parseInt(idx), info);
+    });
+  } catch {}
+}
+
+function _updateCamDebugCard(idx, info) {
+  const stEl   = document.getElementById(`dbg-state-${idx}`);
+  const dfEl   = document.getElementById(`dbg-diff-${idx}`);
+  const ctEl   = document.getElementById(`dbg-ctr-${idx}`);
+  const tipEl  = document.getElementById(`dbg-tip-${idx}`);
+  const stbEl  = document.getElementById(`dbg-stab-${idx}`);
+  const coolEl = document.getElementById(`dbg-cool-${idx}`);
+  const drtEl  = document.getElementById(`dbg-darts-${idx}`);
+
+  if (stEl) {
+    stEl.textContent = info.state;
+    stEl.className   = `dbg-val state-${info.state}`;
+  }
+  if (dfEl)   dfEl.textContent  = info.diff_score;
+  if (ctEl)   ctEl.textContent  = info.contour_count;
+  if (tipEl)  tipEl.textContent = info.tip ? `(${info.tip[0]}, ${info.tip[1]})` : '—';
+  if (stbEl)  stbEl.textContent = info.stable_count;
+  if (coolEl) coolEl.textContent= info.cooldown;
+  if (drtEl)  drtEl.textContent = info.dart_count;
+}
+
+// ── Debug log ──────────────────────────────────────────────────────────────────
+
+const MAX_LOG_ENTRIES = 200;
+
+function dbgLog(type, msg) {
+  if (debugLogPaused) return;
+  const log = document.getElementById('dbg-log');
+  if (!log) return;
+
+  const empty = log.querySelector('.dbg-log-empty');
+  if (empty) empty.remove();
+
+  const now  = new Date();
+  const time = now.toTimeString().slice(0, 8) + '.' + String(now.getMilliseconds()).padStart(3, '0');
+
+  const entry = document.createElement('div');
+  entry.className = `dbg-entry ${type}`;
+  entry.innerHTML = `
+    <span class="dbg-entry-time">${time}</span>
+    <span class="dbg-entry-type">${escHtml(type.toUpperCase())}</span>
+    <span class="dbg-entry-msg">${escHtml(msg)}</span>`;
+
+  log.insertBefore(entry, log.firstChild);
+
+  // Prune old entries
+  const entries = log.querySelectorAll('.dbg-entry');
+  if (entries.length > MAX_LOG_ENTRIES) entries[entries.length - 1].remove();
+}
+
+function toggleDebugLog() {
+  debugLogPaused = !debugLogPaused;
+  const btn = document.getElementById('dbg-pause-log-btn');
+  if (btn) {
+    btn.textContent  = debugLogPaused ? '▶ Log' : '⏸ Log';
+    btn.className    = `dbg-pill ${debugLogPaused ? 'active' : ''}`;
+  }
+}
+
+function clearDebugLog() {
+  const log = document.getElementById('dbg-log');
+  if (log) log.innerHTML = '<div class="dbg-log-empty">Journal vidé.</div>';
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Calibration
