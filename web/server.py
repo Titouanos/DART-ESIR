@@ -923,6 +923,11 @@ async def calib_open(cam_idx: int):
         cap = cv2.VideoCapture(cam_idx)
     if not cap.isOpened():
         raise HTTPException(404, f"Caméra {cam_idx} inaccessible")
+    # Actually read a frame to confirm the camera works (isOpened() can lie on Linux)
+    ok, _ = cap.read()
+    if not ok:
+        cap.release()
+        raise HTTPException(404, f"Caméra {cam_idx} ne renvoie pas d'image")
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  config.CAM_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAM_HEIGHT)
@@ -1049,11 +1054,18 @@ async def calib_status():
         for c in (raw if isinstance(raw, list) else []):
             saved.append({"cam_index": c["cam_index"],
                           "segment": c.get("cam_position_segment")})
+    saved_indexes = {c["cam_index"] for c in saved}
+    pending_indexes = {c["cam_index"] for c in calib.pending}
     return {
         "saved": saved,
         "pending": [{"cam_index": c["cam_index"], "segment": c["cam_position_segment"]}
                     for c in calib.pending],
         "has_file": calib_file.exists(),
+        # Camera indexes active in the current game (for the UI to restrict choices)
+        "game_cams": list(state.cam_indexes),
+        # Which game cameras still need calibration
+        "uncalibrated": [i for i in state.cam_indexes
+                         if i not in saved_indexes and i not in pending_indexes],
     }
 
 

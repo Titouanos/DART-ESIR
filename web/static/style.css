@@ -1457,6 +1457,41 @@ body {
   color: var(--orange);
 }
 
+.calib-cam-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 4px;
+  align-items: center;
+}
+
+.calib-cam-btn {
+  padding: 9px 18px;
+  border-radius: 8px;
+  border: 2px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.calib-cam-btn:hover   { border-color: var(--blue);   color: var(--blue); }
+.calib-cam-btn.done    { border-color: var(--green);  color: var(--green); }
+.calib-cam-btn.pending { border-color: var(--orange); color: var(--orange); }
+.calib-cam-btn.todo    { border-color: var(--red);    color: var(--red); }
+
+.calib-all-done {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 14px;
+  background: rgba(0,200,100,0.1);
+  border: 1px solid var(--green);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: var(--green);
+}
+
 .calib-choose-row {
   display: flex;
   align-items: center;

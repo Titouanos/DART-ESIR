@@ -1193,19 +1193,60 @@ function _showCalibStep(name) {
 async function _refreshCalibStatus() {
   try {
     const data = await apiCall('/api/calibration/status');
+
+    // ── Status chips (saved + pending) ─────────────────────────────────────────
     const bar = document.getElementById('calib-status-bar');
     if (!data.saved.length && !data.pending.length) {
       bar.innerHTML = '<span style="color:var(--dimmed);font-size:0.8rem">Aucune calibration enregistrée</span>';
-      return;
+    } else {
+      const savedIdx   = new Set(data.saved.map(c => c.cam_index));
+      const pendingIdx = new Set(data.pending.map(c => c.cam_index));
+      const chips = [
+        ...data.saved.map(c =>
+          `<span class="calib-cam-chip">✓ Cam ${c.cam_index} — seg ${c.segment ?? '?'}</span>`),
+        ...data.pending.map(c =>
+          `<span class="calib-cam-chip pending">⏳ Cam ${c.cam_index} (non sauvegardé)</span>`),
+      ];
+      bar.innerHTML = chips.join('');
     }
-    const chips = [
-      ...data.saved.map(c =>
-        `<span class="calib-cam-chip">✓ Cam ${c.cam_index} — seg ${c.segment ?? '?'}</span>`),
-      ...data.pending.map(c =>
-        `<span class="calib-cam-chip pending">⏳ Cam ${c.cam_index} — seg ${c.segment ?? '?'} (non sauvegardé)</span>`),
-    ];
-    bar.innerHTML = chips.join('') || '<span style="color:var(--dimmed)">—</span>';
+
+    // ── Camera selector buttons ─────────────────────────────────────────────────
+    const btnArea   = document.getElementById('calib-cam-buttons');
+    const manualRow = document.getElementById('calib-cam-manual');
+    const gameCams  = data.game_cams || [];
+
+    if (gameCams.length > 0) {
+      // Show one button per game camera, coloured by calibration state
+      const savedIdx   = new Set(data.saved.map(c => c.cam_index));
+      const pendingIdx = new Set(data.pending.map(c => c.cam_index));
+      btnArea.innerHTML = gameCams.map(idx => {
+        const done    = savedIdx.has(idx);
+        const pending = pendingIdx.has(idx);
+        const cls     = done ? 'calib-cam-btn done' : pending ? 'calib-cam-btn pending' : 'calib-cam-btn todo';
+        const icon    = done ? '✓' : pending ? '⏳' : '📷';
+        const label   = done ? `Cam ${idx} ✓` : pending ? `Cam ${idx} ⏳` : `Cam ${idx}`;
+        return `<button class="${cls}" onclick="calibOpenCameraIdx(${idx})">${icon} ${label}</button>`;
+      }).join('');
+      manualRow.style.display = 'none';
+
+      // All done banner
+      const allDone = gameCams.every(i => savedIdx.has(i) || pendingIdx.has(i));
+      btnArea.innerHTML += allDone
+        ? `<div class="calib-all-done">✅ Toutes les caméras sont calibrées — cliquez <strong>Sauvegarder</strong></div>`
+        : '';
+    } else {
+      // No active game — fall back to manual index input
+      btnArea.innerHTML = '<span style="color:var(--dimmed);font-size:0.82rem">Aucune partie active — entrez l\'index manuellement.</span>';
+      manualRow.style.display = 'flex';
+    }
+
+    _updateSaveBtn();
   } catch {}
+}
+
+function calibOpenCameraIdx(idx) {
+  document.getElementById('calib-cam-input').value = idx;
+  calibOpenCamera();
 }
 
 async function calibOpenCamera() {

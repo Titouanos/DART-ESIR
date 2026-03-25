@@ -29,7 +29,11 @@
         <!-- Filled by JS -->
       </div>
 
-      <div class="calib-choose-row">
+      <!-- Buttons for game cameras (filled by JS); fallback manual input when no game -->
+      <div id="calib-cam-buttons" class="calib-cam-buttons">
+        <!-- Populated by _refreshCalibStatus() -->
+      </div>
+      <div id="calib-cam-manual" class="calib-choose-row" style="display:none">
         <label>Index caméra</label>
         <input type="number" id="calib-cam-input" value="0" min="0" max="20" style="width:80px" />
         <button class="ctrl-btn primary" onclick="calibOpenCamera()">📷 Ouvrir la caméra</button>
