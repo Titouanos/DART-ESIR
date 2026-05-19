@@ -144,6 +144,30 @@ const ws = new DartWS();
        Côté prod (backend câblé) elle n'a plus de sens — on la masque
        proprement plutôt que de supprimer le HTML qui appartient au design. */
     .devbar { display: none !important; }
+    /* Toast UI : message éphémère en bas d'écran, non-bloquant. */
+    .app-toast {
+      position: fixed; left: 50%; bottom: 60px;
+      transform: translateX(-50%);
+      max-width: 80vw;
+      padding: 12px 24px;
+      background: var(--ink, #171717); color: var(--paper, #f3ecdb);
+      border: 1.5px solid var(--ink, #171717);
+      font-family: 'Anton', sans-serif;
+      font-size: 16px; letter-spacing: 0.08em; text-transform: uppercase;
+      box-shadow: 6px 6px 0 var(--pink, #ff5b9c);
+      z-index: 9999;
+      animation: toast-in 180ms ease forwards;
+    }
+    .app-toast--out {
+      animation: toast-out 220ms ease forwards;
+    }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translate(-50%, 10px); }
+      to   { opacity: 1; transform: translate(-50%, 0); }
+    }
+    @keyframes toast-out {
+      to { opacity: 0; transform: translate(-50%, 10px); }
+    }
   `;
   const style = document.createElement('style');
   style.id = 'app-css';
@@ -194,6 +218,18 @@ function setupClock() {
 // ───────────────────────────────────────────────────────────────────
 function $(sel, root = document) { return root.querySelector(sel); }
 function $$(sel, root = document) { return Array.from(root.querySelectorAll(sel)); }
+
+/** Affiche un toast non-bloquant pendant `durationMs`. Auto-stack si plusieurs. */
+function showToast(text, durationMs = 3000) {
+  const el = document.createElement('div');
+  el.className = 'app-toast';
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('app-toast--out');
+    setTimeout(() => el.remove(), 250);
+  }, durationMs);
+}
 
 /** Échappe une chaîne pour usage dans innerHTML (XSS-safe). */
 function esc(s) {
@@ -261,5 +297,27 @@ function appBoot() {
 
 window.addEventListener('load', appBoot);
 
+// ───────────────────────────────────────────────────────────────────
+// Détection "partie perdue" : si un nouveau snapshot arrive avec un
+// game_id différent APRÈS une déco, l'utilisateur a perdu son état
+// (typiquement crash + redémarrage main.py). On le signale via toast.
+// Les resets volontaires (clic Reset / Démarrer) ne déclenchent rien
+// parce qu'ils ne passent pas par une phase déconnectée.
+// ───────────────────────────────────────────────────────────────────
+let _lastGameId = null;
+let _wasDisconnected = false;
+
+ws.on('snapshot', (snap) => {
+  const newId = snap && snap.game_id;
+  if (_wasDisconnected && _lastGameId && newId && newId !== _lastGameId) {
+    showToast('Partie perdue — nouvelle partie démarrée par le serveur');
+  }
+  if (newId) _lastGameId = newId;
+  _wasDisconnected = false;
+});
+ws.on('_status', ({ connected }) => {
+  if (!connected) _wasDisconnected = true;
+});
+
 // Expose pour les scripts par-page.
-window.DartApp = { ws, $, $$, esc, updateTopbarCams };
+window.DartApp = { ws, $, $$, esc, showToast, updateTopbarCams };

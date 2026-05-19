@@ -3,6 +3,7 @@ DartVision - Game Engine
 Supports: Free Play, 501, 301 with standard rules.
 """
 
+import uuid
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
@@ -146,6 +147,10 @@ class GameEngine:
         self.winner: Optional[str] = None
         self.history: List[dict] = []
         self.turn_number = 1  # numéro de volée global (incrémente quand player 0 commence un tour)
+        # Identifiant unique régénéré à chaque nouvelle partie (setup/reset/boot).
+        # Le frontend s'en sert pour détecter "j'ai perdu mon état" après une déco
+        # suivie d'un redémarrage serveur (game_id différent au snapshot post-reco).
+        self.game_id = uuid.uuid4().hex[:8]
 
     def reset(self, mode: Optional[str] = None,
               player_names: Optional[List[str]] = None,
@@ -175,6 +180,7 @@ class GameEngine:
         """Snapshot complet — utilisé pour l'event WS `snapshot`."""
         return {
             "mode": self.mode,
+            "game_id": self.game_id,
             "leg": {"current": 1, "total": 1},  # single-leg, structure prête multi-leg
             "current_player": self.current_player_idx,
             "turn_number": self.turn_number,
