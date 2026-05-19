@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f3ecdb">
+  <title>DART-ESIR — Partie en cours</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!--
+    ÉTATS SPÉCIAUX — toggler depuis la dev bar (en bas à gauche),
+    ou en ajoutant manuellement une classe au <body> :
+      <body class="state-bust">  → overlay BUST plein écran (pink fluo)
+      <body class="state-win">   → overlay VICTOIRE (papier + stamps)
+      <body class="state-menu">  → overlay MENU modal
+  -->
+
+  <div class="app">
+
+    <!-- ============================================
+         TOPBAR : brand · "LIVE" · cams · clock
+         ============================================ -->
+    <header class="topbar">
+      <div class="topbar__brand">
+        <span class="topbar__logo" aria-hidden="true"></span>
+        DART-ESIR
+        <span class="topbar__sub">fanzine ed.</span>
+      </div>
+      <div class="topbar__mid">
+        <span class="topbar__mode">01 Live</span>
+        <span class="topbar__meta">Partie en cours</span>
+        <span class="stamp stamp--pink">● LIVE</span>
+      </div>
+      <div class="topbar__right">
+        <div class="cam-status" title="État des 3 caméras">
+          <span class="cam-led is-ok"></span>
+          <span class="cam-led is-ok"></span>
+          <span class="cam-led is-ok"></span>
+          <span>3 cams · 92 ms</span>
+        </div>
+        <span class="clock" id="clock">21:34</span>
+      </div>
+    </header>
+
+    <!-- ============================================
+         MAIN : header de partie + 3 colonnes
+         ============================================ -->
+    <main class="main" style="--player-count: 4;">
+
+      <!-- Strip d'en-tête : à gauche FIG. 01 · 501 · LEG 3/5 · LIVE ; à droite Joueurs tabs · Volée -->
+      <div class="playhead">
+        <div class="playhead__left">
+          <span class="caption">FIG. 01 — PARTIE EN COURS</span>
+          <span class="playhead__mode">501 · Leg 3/5</span>
+          <span class="stamp stamp--pink">● LIVE</span>
+        </div>
+        <div class="playhead__right">
+          <div class="jtabs" role="tablist" aria-label="Joueurs">
+            <span class="jtabs__label">Joueurs</span>
+            <button class="jtab is-active" role="tab" aria-selected="true">1</button>
+            <button class="jtab" role="tab">2</button>
+            <button class="jtab" role="tab">3</button>
+            <button class="jtab" role="tab">4</button>
+          </div>
+          <span class="caption caption--plain">VOLÉE N° 7 · DART 3/3</span>
+        </div>
+      </div>
+
+      <!-- === Colonne gauche : 4 cartes joueurs === -->
+      <section class="players" aria-label="Joueurs en cours">
+
+        <!-- J.1 — Titouan (actif, rose pleine) -->
+        <article class="pcard is-active" data-pid="0">
+          <div class="pcard__top">
+            <span>● AU TIR · AVG 67.2</span>
+            <span>J.1</span>
+          </div>
+          <div class="pcard__name">Titouan</div>
+          <div class="pcard__score">141</div>
+          <div class="pcard__bottom">
+            <span class="pcard__chip">T20</span>
+            <span class="pcard__chip">T20</span>
+            <span class="pcard__chip pcard__chip--empty">···</span>
+            <span class="pcard__chk">CHK 38%</span>
+          </div>
+        </article>
+
+        <!-- J.2 — Nathan (en attente, ghost bleu) -->
+        <article class="pcard" data-pid="1">
+          <div class="pcard__top">
+            <span>○ ATTEND · AVG 54.8</span>
+            <span>J.2</span>
+          </div>
+          <div class="pcard__name">Nathan</div>
+          <div class="pcard__score">420</div>
+          <div class="pcard__bottom">
+            <span class="pcard__chip">S5</span>
+            <span class="pcard__chip">D13</span>
+            <span class="pcard__chip">BULL</span>
+            <span class="pcard__chk">CHK 22%</span>
+          </div>
+        </article>
+
+        <!-- J.3 — Paul (en attente, ghost ink) -->
+        <article class="pcard" data-pid="2">
+          <div class="pcard__top">
+            <span>○ ATTEND · AVG 48.1</span>
+            <span>J.3</span>
+          </div>
+          <div class="pcard__name">Paul</div>
+          <div class="pcard__score">379</div>
+          <div class="pcard__bottom">
+            <span class="pcard__chip">T19</span>
+            <span class="pcard__chip">S5</span>
+            <span class="pcard__chip">T20</span>
+            <span class="pcard__chk">CHK 18%</span>
+          </div>
+        </article>
+
+        <!-- J.4 — Julie (en attente, ghost rose) -->
+        <article class="pcard" data-pid="3">
+          <div class="pcard__top">
+            <span>○ ATTEND · AVG 45.7</span>
+            <span>J.4</span>
+          </div>
+          <div class="pcard__name">Julie</div>
+          <div class="pcard__score">390</div>
+          <div class="pcard__bottom">
+            <span class="pcard__chip">D20</span>
+            <span class="pcard__chip">T17</span>
+            <span class="pcard__chip">S20</span>
+            <span class="pcard__chk">CHK 14%</span>
+          </div>
+        </article>
+
+      </section>
+
+      <!-- === Cible === -->
+      <section class="board-wrap" aria-label="Cible — impacts du tour">
+        <div class="board">
+          <div class="board__shadow" aria-hidden="true"></div>
+          <svg class="board__svg" viewBox="-130 -130 260 260" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+        <span class="board__caption">CAPTURE 3 CAMS · MERGED · CONF. 0.97</span>
+      </section>
+
+      <!-- === Droite : Stats matrix + Journal des volées === -->
+      <aside class="sidepanel">
+
+        <!-- Matrix stats 4 joueurs -->
+        <section class="matrix">
+          <div class="matrix__head">
+            <span class="caption">FIG. 02 — STATS · LEG 3/5</span>
+            <span class="caption caption--plain">4 J.</span>
+          </div>
+          <div class="matrix__grid">
+            <span class="matrix__col-head">&nbsp;</span>
+            <span class="matrix__col-head matrix__col-head--p0">J.1</span>
+            <span class="matrix__col-head matrix__col-head--p1">J.2</span>
+            <span class="matrix__col-head matrix__col-head--p2">J.3</span>
+            <span class="matrix__col-head matrix__col-head--p3">J.4</span>
+
+            <span class="matrix__row-label">Avg volée</span>
+            <span class="matrix__cell matrix__cell--p0">67.2</span>
+            <span class="matrix__cell matrix__cell--p1">54.8</span>
+            <span class="matrix__cell matrix__cell--p2">48.1</span>
+            <span class="matrix__cell matrix__cell--p3">45.7</span>
+
+            <span class="matrix__row-label">180 / Ton+</span>
+            <span class="matrix__cell matrix__cell--p0">1 / 3</span>
+            <span class="matrix__cell matrix__cell--p1">0 / 1</span>
+            <span class="matrix__cell matrix__cell--p2">0 / 2</span>
+            <span class="matrix__cell matrix__cell--p3">0 / 1</span>
+
+            <span class="matrix__row-label">Checkout %</span>
+            <span class="matrix__cell matrix__cell--p0">38%</span>
+            <span class="matrix__cell matrix__cell--p1">22%</span>
+            <span class="matrix__cell matrix__cell--p2">18%</span>
+            <span class="matrix__cell matrix__cell--p3">14%</span>
+
+            <span class="matrix__row-label">High checkout</span>
+            <span class="matrix__cell matrix__cell--p0">110</span>
+            <span class="matrix__cell matrix__cell--p1">76</span>
+            <span class="matrix__cell matrix__cell--p2">62</span>
+            <span class="matrix__cell matrix__cell--p3">54</span>
+
+            <span class="matrix__row-label matrix__row-label--last">Fléchettes · leg</span>
+            <span class="matrix__cell matrix__cell--p0">18</span>
+            <span class="matrix__cell matrix__cell--p1">15</span>
+            <span class="matrix__cell matrix__cell--p2">21</span>
+            <span class="matrix__cell matrix__cell--p3">24</span>
+          </div>
+        </section>
+
+        <!-- Journal des volées -->
+        <section class="journal card">
+          <div class="journal__head">
+            <span class="caption">FIG. 03 — JOURNAL DES VOLÉES</span>
+            <span class="caption caption--plain">8 ENTRÉES</span>
+          </div>
+          <div class="journal__list">
+            <div class="journal__row">
+              <span class="journal__time">14:49:50</span>
+              <span class="journal__who journal__who--p3" style="color: var(--pink);">JULIE</span>
+              <span>D20 · T17 · S20 = 111</span>
+            </div>
+            <div class="journal__row">
+              <span class="journal__time">14:49:35</span>
+              <span class="journal__who journal__who--ink">PAUL</span>
+              <span>T19 · S5 · T20 = 122</span>
+            </div>
+            <div class="journal__row">
+              <span class="journal__time">14:49:19</span>
+              <span class="journal__who journal__who--blue">NATHAN</span>
+              <span>S5 · D13 · BULL = 81</span>
+            </div>
+            <div class="journal__row">
+              <span class="journal__time">14:49:04</span>
+              <span class="journal__who journal__who--pink">TITOUAN</span>
+              <span>T20 · T20 · T20 = 180</span>
+            </div>
+            <div class="journal__row">
+              <span class="journal__time">14:48:49</span>
+              <span class="journal__who journal__who--p3" style="color: var(--pink);">JULIE</span>
+              <span>D20 · T17 · S20 = 111</span>
+            </div>
+            <div class="journal__row">
+              <span class="journal__time">14:48:33</span>
+              <span class="journal__who journal__who--ink">PAUL</span>
+              <span>T19 · S5 · T20 = 122</span>
+            </div>
+            <div class="journal__row">
+              <span class="journal__time">14:48:18</span>
+              <span class="journal__who journal__who--blue">NATHAN</span>
+              <span>S5 · D13 · BULL = 81</span>
+            </div>
+            <div class="journal__row">
+              <span class="journal__time">14:48:02</span>
+              <span class="journal__who journal__who--pink">TITOUAN</span>
+              <span>T20 · T20 · T20 = 180</span>
+            </div>
+          </div>
+        </section>
+
+      </aside>
+
+    </main>
+
+    <!-- ============================================
+         ACTIONS : 3 boutons
+         ============================================ -->
+    <div class="actions">
+      <button class="btn" id="undoBtn" aria-label="Annuler le dernier lancer">
+        <span class="btn__icon">↶</span>
+        <span>Annuler lancer</span>
+      </button>
+      <button class="btn" id="menuBtn" aria-label="Ouvrir le menu">
+        <span class="btn__icon">☰</span>
+        <span>Menu</span>
+      </button>
+      <button class="btn btn--primary" id="nextBtn" aria-label="Valider et passer au tour suivant">
+        <span>Tour suivant</span>
+        <span class="btn__icon">→</span>
+      </button>
+    </div>
+
+    <!-- ============================================
+         TICKER
+         ============================================ -->
+    <div class="ticker" aria-hidden="true">
+      <div class="ticker__track">
+        <span><span class="ticker__star">★</span> DART-ESIR FANZINE ED.</span>
+        <span>VOLÉE EN COURS — TITOUAN À 141</span>
+        <span>● 3 CAMS · 60 FPS · LATENCE 92 MS</span>
+        <span>CONFIANCE 0.97</span>
+        <span>★ TON OF 80 ! ★</span>
+        <span>NATHAN À 420 — CHECKOUT 22%</span>
+        <span><span class="ticker__star">★</span> DART-ESIR FANZINE ED.</span>
+        <span>VOLÉE EN COURS — TITOUAN À 141</span>
+        <span>● 3 CAMS · 60 FPS · LATENCE 92 MS</span>
+        <span>CONFIANCE 0.97</span>
+        <span>★ TON OF 80 ! ★</span>
+        <span>NATHAN À 420 — CHECKOUT 22%</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============================================
+       OVERLAY BUST
+       ============================================ -->
+  <div class="overlay overlay--bust" role="alert" aria-live="assertive">
+    <span class="overlay__title">BUST</span>
+    <span class="overlay__subtitle">Score du tour annulé</span>
+    <span class="overlay__detail">Titouan reste à 261 — passe à Nathan</span>
+  </div>
+
+  <!-- ============================================
+       OVERLAY VICTOIRE
+       ============================================ -->
+  <div class="overlay overlay--win" role="alert" aria-live="assertive">
+    <span class="overlay__caption">★ FIG. FINAL — CHECKOUT</span>
+    <h2 class="overlay__title" data-text="Titouan">Titouan</h2>
+    <span class="overlay__verdict">Gagne en 21 fléchettes</span>
+    <span class="overlay__stats">501 → 0 · Moyenne 71.5 · Meilleur tour 180</span>
+    <div class="overlay__actions">
+      <button class="btn" onclick="window.location.href='end.html'">Voir le résumé</button>
+      <button class="btn btn--primary" onclick="window.location.href='setup.html'">Nouvelle partie</button>
+    </div>
+  </div>
+
+  <!-- ============================================
+       MODAL MENU
+       ============================================ -->
+  <div class="modal" role="dialog" aria-label="Menu de partie">
+    <div class="modal__sheet">
+      <div class="modal__shadow" aria-hidden="true"></div>
+      <header class="modal__head">
+        <h3 class="modal__title">Menu</h3>
+        <button class="modal__close" data-action="close-state" aria-label="Fermer">✕</button>
+      </header>
+      <div class="modal__list">
+        <button class="modal__action">
+          <span class="modal__icon">↺</span>
+          <span>Reset partie</span>
+        </button>
+        <button class="modal__action" onclick="window.location.href='calibration.html'">
+          <span class="modal__icon">⊞</span>
+          <span>Recalibrer le système</span>
+        </button>
+        <button class="modal__action">
+          <span class="modal__icon">◉</span>
+          <span>Capturer la référence (board vide)</span>
+        </button>
+        <button class="modal__action modal__action--danger" onclick="window.location.href='setup.html'">
+          <span class="modal__icon">⏻</span>
+          <span>Quitter la partie</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================
+       DEV BAR
+       ============================================ -->
+  <div class="devbar" id="devbar" aria-label="Visualiser les états d'écran (dev)">
+    <span class="devbar__label">État</span>
+    <button class="devbar__btn is-on" data-state="">Normal</button>
+    <button class="devbar__btn" data-state="state-bust">Bust</button>
+    <button class="devbar__btn" data-state="state-win">Victoire</button>
+    <button class="devbar__btn" data-state="state-menu">Menu</button>
+  </div>
+
+  <script>
+    // ===== Interactions visuelles minimales (zéro logique métier) =====
+
+    // ============================================================
+    //  Cible (dartboard) — génération SVG en JS
+    // ============================================================
+    const SEGMENTS = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
+
+    const BOARD = {
+      ink:      '#171717',
+      paper:    '#f3ecdb',
+      pink:     '#ff5b9c',
+      blue:     '#2e3aa8',
+      wire:     'rgba(243, 236, 219, 0.55)',
+      darkSeg:  '#171717',
+      lightSeg: '#f3ecdb',
+    };
+
+    const R = {
+      board: 124, doubleOut: 108, doubleIn: 100,
+      tripleOut: 67, tripleIn: 60,
+      outerBull: 16, bull: 6.5, numberR: 117,
+    };
+
+    (function buildBoard() {
+      const svg = document.querySelector('.board__svg');
+      if (!svg) return;
+      const NS = 'http://www.w3.org/2000/svg';
+
+      const pt = (deg, r) => {
+        const a = deg * Math.PI / 180;
+        return [Math.cos(a) * r, Math.sin(a) * r];
+      };
+      const wedge = (a1, a2, rIn, rOut) => {
+        const [x1, y1] = pt(a1, rOut);
+        const [x2, y2] = pt(a2, rOut);
+        const [x3, y3] = pt(a2, rIn);
+        const [x4, y4] = pt(a1, rIn);
+        return `M ${x1} ${y1} A ${rOut} ${rOut} 0 0 1 ${x2} ${y2} L ${x3} ${y3} A ${rIn} ${rIn} 0 0 0 ${x4} ${y4} Z`;
+      };
+      const el = (tag, attrs, text) => {
+        const e = document.createElementNS(NS, tag);
+        for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+        if (text != null) e.textContent = text;
+        return e;
+      };
+
+      // Disque noir du rim (cercle extérieur)
+      svg.appendChild(el('circle', { cx: 0, cy: 0, r: R.board, fill: BOARD.ink }));
+
+      // 20 secteurs (single / triple / single / double) — anneaux pink/blue pleins
+      SEGMENTS.forEach((num, i) => {
+        const ca = -90 + i * 18;
+        const a1 = ca - 9;
+        const a2 = ca + 9;
+        const even = i % 2 === 0;
+        const single = even ? BOARD.darkSeg : BOARD.lightSeg;
+        const ring   = even ? BOARD.pink    : BOARD.blue;
+
+        svg.appendChild(el('path', { d: wedge(a1, a2, R.outerBull, R.tripleIn),  fill: single }));
+        svg.appendChild(el('path', { d: wedge(a1, a2, R.tripleIn,  R.tripleOut), fill: ring }));
+        svg.appendChild(el('path', { d: wedge(a1, a2, R.tripleOut, R.doubleIn),  fill: single }));
+        svg.appendChild(el('path', { d: wedge(a1, a2, R.doubleIn,  R.doubleOut), fill: ring }));
+      });
+
+      // Wires
+      const g = el('g', { stroke: BOARD.wire, 'stroke-width': 0.5, fill: 'none' });
+      SEGMENTS.forEach((_, i) => {
+        const a1 = (-90 + i * 18 - 9);
+        const [x0, y0] = pt(a1, R.outerBull);
+        const [x1, y1] = pt(a1, R.doubleOut);
+        g.appendChild(el('line', { x1: x0, y1: y0, x2: x1, y2: y1 }));
+      });
+      [R.doubleOut, R.doubleIn, R.tripleOut, R.tripleIn, R.outerBull].forEach(r => {
+        g.appendChild(el('circle', { cx: 0, cy: 0, r }));
+      });
+      svg.appendChild(g);
+
+      // Bulls — pleines couleurs
+      svg.appendChild(el('circle', { cx: 0, cy: 0, r: R.outerBull, fill: BOARD.blue }));
+      svg.appendChild(el('circle', { cx: 0, cy: 0, r: R.bull,      fill: BOARD.pink }));
+
+      // Numéros sur le rim
+      SEGMENTS.forEach((num, i) => {
+        const ca = -90 + i * 18;
+        const [nx, ny] = pt(ca, R.numberR);
+        svg.appendChild(el('text', {
+          x: nx, y: ny + 2.2,
+          'text-anchor': 'middle',
+          'font-family': "'Anton', sans-serif",
+          'font-size': 9,
+          fill: BOARD.paper,
+          'letter-spacing': '0.5',
+        }, num));
+      });
+
+      // Dernier impact uniquement (subtil) — pastille papier avec bordure
+      const lastImpact = { segment: 20, multiplier: 3 };
+      const radiusFor = (mult) => mult === 3 ? (R.tripleIn + R.tripleOut)/2
+                                : mult === 2 ? (R.doubleIn + R.doubleOut)/2
+                                :              (R.outerBull + R.tripleIn)/2;
+      const segIdx = SEGMENTS.indexOf(lastImpact.segment);
+      const ca = -90 + segIdx * 18 + 1;
+      const [x, y] = pt(ca, radiusFor(lastImpact.multiplier));
+      svg.appendChild(el('circle', { cx: x, cy: y, r: 5, fill: 'none', stroke: BOARD.paper, 'stroke-width': 1.5 }));
+      svg.appendChild(el('circle', { cx: x, cy: y, r: 2.4, fill: BOARD.paper }));
+    })();
+
+    // ============================================================
+    //  États (dev bar, menu, etc.)
+    // ============================================================
+    const body = document.body;
+    const devbar = document.getElementById('devbar');
+
+    function setState(state) {
+      body.className = state || '';
+      devbar.querySelectorAll('.devbar__btn').forEach(b =>
+        b.classList.toggle('is-on', (b.dataset.state || '') === (state || ''))
+      );
+    }
+
+    devbar.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-state]');
+      if (!btn) return;
+      setState(btn.dataset.state);
+    });
+
+    document.getElementById('menuBtn').addEventListener('click', () => setState('state-menu'));
+
+    document.querySelectorAll('[data-action="close-state"]').forEach(el =>
+      el.addEventListener('click', () => setState(''))
+    );
+    document.querySelector('.modal').addEventListener('click', (e) => {
+      if (e.target.classList.contains('modal')) setState('');
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') setState('');
+    });
+
+    // Horloge live
+    const clock = document.getElementById('clock');
+    function tick() {
+      const d = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      clock.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    tick();
+    setInterval(tick, 30 * 1000);
+  </script>
+</body>
+</html>

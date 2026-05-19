@@ -8,7 +8,7 @@ import math
 # =============================================================================
 # CAMERAS
 # =============================================================================
-CAM_INDEXES = [0, 1, 2]       # USB webcam indexes (override with --cams)
+CAM_INDEXES = [0, 2, 4]       # USB webcam indexes (override with --cams)
 CAM_WIDTH = 1280
 CAM_HEIGHT = 720
 CAM_FPS = 20
@@ -16,7 +16,23 @@ CAM_FPS = 20
 # Camera mounting positions: segment number where each camera sits.
 # Used for confidence zone weighting.
 # Set during calibration or via --cam-positions
-CAM_POSITIONS = [11, 18, 6]   # Default guess, updated at calibration
+CAM_POSITIONS = [20, 3, 11]   # Default guess, updated at calibration
+
+# Mapping slot UI (A/B/C) → index physique. Lu par main.py pour pousser
+# les frames JPEG dans bridge.set_frame(slot, ...), et par webui pour
+# afficher Cam-A/B/C dans l'interface. Modifiable sans toucher au code.
+CAM_SLOTS = [
+    {"slot": "A", "index": 0, "master": False},
+    {"slot": "B", "index": 2, "master": False},
+    {"slot": "C", "index": 4, "master": True},   # le design fanzine désigne C=master
+]
+
+# =============================================================================
+# WEB UI
+# =============================================================================
+WEB_HOST = "0.0.0.0"
+WEB_PORT = 8000
+WEB_KIOSK_URL = "http://localhost:8000/"
 
 # =============================================================================
 # CALIBRATION

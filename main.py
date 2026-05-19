@@ -22,6 +22,10 @@ Controls:
 
 import argparse
 import time
+from datetime import datetime
+from typing import Optional
+
+import logging
 import cv2
 import numpy as np
 
@@ -31,17 +35,26 @@ from detector import DartDetector
 from board import compute_score, draw_board_overlay
 from fusion import FusionEngine, CameraConfidence
 from game import GameEngine
+from webui.bridge import Bridge
+from webui.server import serve_in_thread
+
+logger = logging.getLogger("dartvision.main")
 
 
 class DartVision:
 
     def __init__(self, mode="free", num_players=1, player_names=None,
-                 recalibrate=False, cam_positions=None):
+                 recalibrate=False, cam_positions=None, headless=False):
         self.mode = mode
         self.recalibrate = recalibrate
         self.debug_mode = False
         self.running = True
+        self.headless = headless
         self.cam_positions_override = cam_positions
+        # Timestamp du dernier read OK par cam (alimenté dans la boucle).
+        # Permet de détecter un unplug USB : isOpened() reste True après débranchement,
+        # mais read() retourne False. On considère une cam KO si pas de read OK > 1s.
+        self._last_cam_read: list = []
 
         names = player_names or [f"Player {i+1}" for i in range(num_players)]
         self.game = GameEngine(mode=mode, player_names=names)
@@ -54,9 +67,24 @@ class DartVision:
 
         self.last_score = None
         self.last_score_time = 0
-        
+
         # Clickable buttons config: (label, x, y, w, h, key_equiv, color)
         self.buttons = []
+
+        # --- Bridge web : démarrage du serveur FastAPI dans un thread séparé. ---
+        # Le bridge expose un contrat (Controller) pour les actions hors-GameEngine
+        # (capture_reference, recalibration, quit). GameEngine notifie via observer.
+        self.bridge = Bridge()
+        self.bridge.attach_game(self.game)
+        self.bridge.attach_controller(self)
+        self._web_thread = serve_in_thread(
+            self.bridge,
+            host=getattr(config, "WEB_HOST", "0.0.0.0"),
+            port=getattr(config, "WEB_PORT", 8000),
+        )
+        self._last_status_emit = 0.0
+        self._recalib_requested = False
+        self._ref_captured_at: Optional[str] = None
 
     # -----------------------------------------------------------------
     # INIT
@@ -126,8 +154,25 @@ class DartVision:
     def calibrate(self) -> bool:
         if not self.recalibrate:
             loaded = load_calibrations()
-            if loaded and len(loaded) >= len(config.CAM_INDEXES):
-                self.calibrators = loaded[:len(config.CAM_INDEXES)]
+            # Filtre l'artefact `cam_index=1` (nœud metadata du Pi) qui pollue
+            # parfois calibration.json suite à une session de calibration sur le
+            # mauvais index. On le loggue explicitement pour repérer une éventuelle
+            # régression de calibration.py.
+            filtered = [c for c in loaded if c.cam_index not in self._metadata_nodes()]
+            if len(filtered) < len(loaded):
+                dropped = [c.cam_index for c in loaded if c.cam_index in self._metadata_nodes()]
+                logger.warning(
+                    "calibration.json contient des cam_index sans données utiles "
+                    "(metadata nodes du Pi), ignorés: %s", dropped)
+                # On affiche aussi en stdout au cas où le root logger ne soit pas configuré.
+                print(f"[WARN] calibration.json: cam_index metadata ignorés: {dropped}")
+            # Réordonne les calibrators pour matcher l'ordre de config.CAM_INDEXES
+            # (= l'ordre d'ouverture des caps), sinon caps[i] et calibrators[i]
+            # référeraient à des cams physiques différentes → warps cassés.
+            by_idx = {c.cam_index: c for c in filtered}
+            ordered = [by_idx[i] for i in config.CAM_INDEXES if i in by_idx]
+            if ordered and len(ordered) >= len(config.CAM_INDEXES):
+                self.calibrators = ordered
                 self._open_all_cameras()
                 self._init_fusion()
                 return True
@@ -174,6 +219,10 @@ class DartVision:
         self.cam_visible = [True] * len(self.caps)
         print(f"  {len(self.caps)} camera(s) ready.")
 
+    # Remarque : `calibrate()` était dupliqué dans le fichier original. La 2e
+    # définition (qui n'avait pas le filtre metadata) a été retirée pour ne
+    # garder que la version filtrée + ordonnée par CAM_INDEXES.
+
     def _init_fusion(self):
         """Initialize fusion engine from calibration data."""
         confidences = []
@@ -191,6 +240,77 @@ class DartVision:
         self.fusion = FusionEngine(confidences)
 
     # -----------------------------------------------------------------
+    # CONTROLLER (consommé par webui.Bridge pour les actions non-game)
+    # -----------------------------------------------------------------
+    @staticmethod
+    def _metadata_nodes() -> set:
+        """Indexes V4L2 qui ne sont pas de vraies caméras (metadata libcamera).
+
+        Sur les Pi Bookworm chaque cam USB expose 2 nodes : capture (pair) +
+        metadata (impair). On les filtre ici pour ne pas calibrer sur un node
+        qui ne renvoie pas d'image utile.
+        """
+        return {1, 3, 5}
+
+    def start_recalibration(self) -> None:
+        """Marque qu'une recalibration doit être faite. Consommé en début de boucle."""
+        self._recalib_requested = True
+
+    def request_shutdown(self) -> None:
+        self.running = False
+
+    # -----------------------------------------------------------------
+    # SYSTÈME — snapshot pour push_status
+    # -----------------------------------------------------------------
+    def _build_system_snapshot(self) -> dict:
+        """Construit le dict système attendu par bridge.push_status()."""
+        slots = getattr(config, "CAM_SLOTS", [
+            {"slot": "A", "index": 0, "master": False},
+            {"slot": "B", "index": 2, "master": False},
+            {"slot": "C", "index": 4, "master": True},
+        ])
+        cams_info = []
+        now_ts = time.time()
+        for spec in slots:
+            slot = spec["slot"]
+            idx = spec["index"]
+            cap_ok = False
+            seg = None
+            try:
+                pos = next((i for i, c in enumerate(self.calibrators)
+                            if c.cam_index == idx), None)
+                if pos is not None and pos < len(self.caps):
+                    # isOpened() reste True même après unplug USB ; on croise avec
+                    # le timestamp du dernier read OK (vivant si < 1.5s).
+                    if self._last_cam_read and pos < len(self._last_cam_read):
+                        cap_ok = (now_ts - self._last_cam_read[pos]) < 1.5
+                    else:
+                        cap_ok = self.caps[pos].isOpened()
+                    seg = self.calibrators[pos].cam_position_segment
+            except Exception:
+                pass
+            cams_info.append({
+                "id": slot,
+                "ok": cap_ok,
+                "fps": config.CAM_FPS,
+                "seg": seg,
+                "latency_ms": 0,  # placeholder ; sera mesuré plus tard si besoin
+                "master": bool(spec.get("master")),
+            })
+        return {
+            "cams": cams_info,
+            "calibration": {
+                "ok": bool(self.calibrators),
+                "residual_mm": 0.0,  # `calibration.py` ne calcule pas encore le résiduel RANSAC
+            },
+            "reference": {
+                "ok": self._ref_captured_at is not None,
+                "captured_at": self._ref_captured_at,
+            },
+            "game_state": "end" if self.game.game_over else "live",
+        }
+
+    # -----------------------------------------------------------------
     # REFERENCE CAPTURE
     # -----------------------------------------------------------------
     def capture_reference(self):
@@ -204,6 +324,9 @@ class DartVision:
                 warped = self.calibrators[i].warp_frame(frame)
                 self.detectors[i].set_reference(warped)
                 print(f"  Cam {i}: OK")
+        self._ref_captured_at = datetime.now().strftime("%H:%M")
+        # Push immédiat : bool ref_ok est passé de False à True (ou se rafraîchit).
+        self.bridge.push_status(self._build_system_snapshot())
 
     # -----------------------------------------------------------------
     # DETECTION + FUSION
@@ -546,9 +669,13 @@ class DartVision:
 
         self.capture_reference()
 
-        cv2.namedWindow("DartVision", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("DartVision", config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
-        cv2.setMouseCallback("DartVision", self._mouse_callback)
+        # En mode headless (--headless) on skip toute interaction OpenCV.
+        # La fenêtre de debug devient inutile dès qu'on a l'UI web ; ce flag
+        # permet aussi de tester via SSH sans X server.
+        if not self.headless:
+            cv2.namedWindow("DartVision", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("DartVision", config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
+            cv2.setMouseCallback("DartVision", self._mouse_callback)
 
         print(f"\n{'='*60}")
         print(f"DARTVISION v3 - {len(self.caps)} CAMERAS")
@@ -557,9 +684,22 @@ class DartVision:
 
         while self.running:
             try:
+                # Recalibration demandée par le WebSocket (touche 'c' clavier
+                # passe directement par _handle_key).
+                if self._recalib_requested:
+                    self._recalib_requested = False
+                    self.recalibrate = True
+                    self.calibrate()
+                    self.capture_reference()
+
                 warped_frames = []
+                if len(self._last_cam_read) != len(self.caps):
+                    self._last_cam_read = [0.0] * len(self.caps)
+                now_ts = time.time()
                 for i, cap in enumerate(self.caps):
                     ret, frame = cap.read()
+                    if ret:
+                        self._last_cam_read[i] = now_ts
                     if ret and i < len(self.calibrators):
                         warped_frames.append(self.calibrators[i].warp_frame(frame))
                     else:
@@ -570,12 +710,27 @@ class DartVision:
                 if fused is not None:
                     self._handle_detection(fused)
 
-                # Render
-                display = self.draw_display(warped_frames)
-                cv2.imshow("DartVision", display)
+                # Render OpenCV uniquement si on n'est pas headless
+                if not self.headless:
+                    display = self.draw_display(warped_frames)
+                    cv2.imshow("DartVision", display)
 
-                key = cv2.waitKey(30) & 0xFF
-                self._handle_key(key)
+                # Push frames JPEG vers le bridge (un par slot mappé).
+                # ~20 fps suffisent pour le streaming web ; on évite de re-encoder
+                # à chaque frame si la cam pousse plus rapidement (config.CAM_FPS).
+                self._push_frames_to_bridge(warped_frames)
+
+                # Push status système ~2 Hz (le bridge re-throttle au besoin).
+                now = time.time()
+                if now - self._last_status_emit >= 0.5:
+                    self._last_status_emit = now
+                    self.bridge.push_status(self._build_system_snapshot())
+
+                if self.headless:
+                    time.sleep(0.03)  # ~30ms tick comme cv2.waitKey(30)
+                else:
+                    key = cv2.waitKey(30) & 0xFF
+                    self._handle_key(key)
 
             except Exception as e:
                 print(f"\n[ERROR] {type(e).__name__}: {e}")
@@ -587,6 +742,33 @@ class DartVision:
             cap.release()
         cv2.destroyAllWindows()
         print("\nDartVision closed.")
+
+    def _push_frames_to_bridge(self, warped_frames):
+        """Encode chaque frame warpée en JPEG et la dépose dans le bridge.
+
+        Mappage cam_index → slot via config.CAM_SLOTS. Si l'index physique
+        n'a pas de slot, on skip silencieusement.
+        """
+        slot_by_index = {
+            spec["index"]: spec["slot"]
+            for spec in getattr(config, "CAM_SLOTS", [])
+        }
+        if not slot_by_index:
+            return
+        for i, warped in enumerate(warped_frames):
+            if warped is None or i >= len(self.calibrators):
+                continue
+            phys_idx = self.calibrators[i].cam_index
+            slot = slot_by_index.get(phys_idx)
+            if slot is None:
+                continue
+            try:
+                ok, jpg = cv2.imencode(".jpg", warped,
+                                        [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                if ok:
+                    self.bridge.set_frame(slot, jpg.tobytes())
+            except Exception:
+                pass
 
 
 def main():
@@ -600,6 +782,9 @@ def main():
     parser.add_argument("--cam-positions", nargs="+", type=int, default=None,
                         help="Segment each cam faces (e.g. --cam-positions 11 18 6)")
     parser.add_argument("--recalibrate", action="store_true")
+    parser.add_argument("--headless", action="store_true",
+                        help="Pas de fenêtre OpenCV (UI accessible via le web uniquement). "
+                             "Utile pour les sessions SSH ou le déploiement kiosque.")
 
     args = parser.parse_args()
 
@@ -614,6 +799,7 @@ def main():
         player_names=args.names,
         recalibrate=args.recalibrate,
         cam_positions=args.cam_positions,
+        headless=args.headless,
     )
     app.run()
 

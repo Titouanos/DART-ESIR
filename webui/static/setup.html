@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f3ecdb">
+  <title>DART-ESIR — Préparer la partie</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!--
+    ÉTATS SPÉCIAUX du SETUP — toggler via la dev bar (en bas à gauche) :
+      class="state-warn"   → indique caméra/calibration HS dans le bandeau système
+      class="state-menu"   → ouvre la modale (Recalibrer / Capturer ref / Quitter)
+  -->
+
+  <div class="app">
+
+    <!-- ============================================
+         TOPBAR : brand · "Setup" · cams · clock
+         ============================================ -->
+    <header class="topbar">
+      <div class="topbar__brand">
+        <span class="topbar__logo" aria-hidden="true"></span>
+        DART-ESIR
+        <span class="topbar__sub">fanzine ed.</span>
+      </div>
+      <div class="topbar__mid">
+        <span class="topbar__mode">Setup</span>
+        <span class="topbar__meta">Préparer la partie</span>
+        <span class="stamp">● HORS PARTIE</span>
+      </div>
+      <div class="topbar__right">
+        <div class="cam-status" title="État des 3 caméras">
+          <span class="cam-led is-ok"></span>
+          <span class="cam-led is-ok"></span>
+          <span class="cam-led is-ok"></span>
+          <span>3 cams · prêt</span>
+        </div>
+        <span class="clock" id="clock">21:34</span>
+      </div>
+    </header>
+
+    <!-- ============================================
+         MAIN : header + modes + joueurs + système
+         ============================================ -->
+    <main class="main main--setup">
+
+      <!-- Header de page -->
+      <header class="setup-head">
+        <div class="setup-head__left">
+          <span class="caption">FIG. 00 — AVANT LA PARTIE</span>
+          <h1 class="setup-title">Préparer la <em>partie.</em></h1>
+        </div>
+        <span class="stamp stamp--pink">● ÉTAPE 1 / 1</span>
+      </header>
+
+      <!-- === Mode de jeu === -->
+      <section class="setup-section">
+        <div class="setup-section__head">
+          <span class="caption">FIG. 01 — MODE DE JEU</span>
+          <span class="caption">SÉLECTIONNER UN FORMAT</span>
+        </div>
+        <div class="mode-grid" role="radiogroup" aria-label="Mode de jeu">
+
+          <button class="mode-card" data-mode="free" role="radio" aria-checked="false">
+            <span class="mode-card__bg" aria-hidden="true"></span>
+            <div class="mode-card__top">
+              <span class="mode-card__caption">03 · Entraînement</span>
+              <span class="mode-card__check" aria-hidden="true">✓</span>
+            </div>
+            <span class="mode-card__num">Free</span>
+            <span class="mode-card__desc">Cumul libre, sans cible</span>
+            <span class="mode-card__meta">illimité · 1 à 8 joueurs</span>
+          </button>
+
+          <button class="mode-card" data-mode="301" role="radio" aria-checked="false">
+            <span class="mode-card__bg" aria-hidden="true"></span>
+            <div class="mode-card__top">
+              <span class="mode-card__caption">02 · Format court</span>
+              <span class="mode-card__check" aria-hidden="true">✓</span>
+            </div>
+            <span class="mode-card__num">301</span>
+            <span class="mode-card__desc">Premier à zéro · double-out</span>
+            <span class="mode-card__meta">~15 min · 2 à 8 joueurs</span>
+          </button>
+
+          <button class="mode-card is-active" data-mode="501" role="radio" aria-checked="true">
+            <span class="mode-card__bg" aria-hidden="true"></span>
+            <div class="mode-card__top">
+              <span class="mode-card__caption">01 · Standard</span>
+              <span class="mode-card__check" aria-hidden="true">✓</span>
+            </div>
+            <span class="mode-card__num">501</span>
+            <span class="mode-card__desc">Premier à zéro · double-out</span>
+            <span class="mode-card__meta">~25–30 min · 2 à 8 joueurs</span>
+          </button>
+
+        </div>
+      </section>
+
+      <!-- === Joueurs === -->
+      <section class="setup-section">
+        <div class="setup-section__head">
+          <span class="caption">FIG. 02 — JOUEURS</span>
+          <span class="caption" id="playerCount">3 / 8 INSCRITS</span>
+        </div>
+        <div class="player-list" id="playerList">
+          <!-- 3 joueurs en démo. Les nouvelles lignes sont ajoutées via JS. -->
+          <div class="player-input is-active" data-idx="0">
+            <span class="player-input__num">J.1</span>
+            <input type="text" value="Titouan" class="player-input__name" maxlength="14" aria-label="Nom du joueur 1">
+            <button class="player-input__remove" aria-label="Retirer ce joueur">✕</button>
+          </div>
+          <div class="player-input" data-idx="1">
+            <span class="player-input__num">J.2</span>
+            <input type="text" value="Kévin" class="player-input__name" maxlength="14" aria-label="Nom du joueur 2">
+            <button class="player-input__remove" aria-label="Retirer ce joueur">✕</button>
+          </div>
+          <div class="player-input" data-idx="2">
+            <span class="player-input__num">J.3</span>
+            <input type="text" value="Paul" class="player-input__name" maxlength="14" aria-label="Nom du joueur 3">
+            <button class="player-input__remove" aria-label="Retirer ce joueur">✕</button>
+          </div>
+          <button class="player-add" id="addPlayer">
+            <span class="player-add__plus" aria-hidden="true">+</span>
+            <span>Ajouter un joueur</span>
+            <span class="player-add__hint">jusqu'à 8</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- === Bandeau système (en bas du main) === -->
+      <section class="system-bar">
+        <span class="caption">FIG. 03 — SYSTÈME · ÉTAT EN TEMPS RÉEL</span>
+        <div class="system-status" id="systemStatus">
+          <div class="system-item" data-cam="A">
+            <span class="cam-led is-ok" aria-hidden="true"></span>
+            <div class="system-item__body">
+              <span class="system-item__label">Cam-A · seg 11</span>
+              <span class="system-item__val">60 fps · OK</span>
+            </div>
+          </div>
+          <div class="system-item" data-cam="B">
+            <span class="cam-led is-ok" aria-hidden="true"></span>
+            <div class="system-item__body">
+              <span class="system-item__label">Cam-B · seg 18</span>
+              <span class="system-item__val">60 fps · OK</span>
+            </div>
+          </div>
+          <div class="system-item" data-cam="C">
+            <span class="cam-led is-ok" aria-hidden="true"></span>
+            <div class="system-item__body">
+              <span class="system-item__label">Cam-C · seg 6</span>
+              <span class="system-item__val">60 fps · OK</span>
+            </div>
+          </div>
+          <div class="system-item" data-item="calib">
+            <span class="system-item__check" aria-hidden="true">✓</span>
+            <div class="system-item__body">
+              <span class="system-item__label">Calibration</span>
+              <span class="system-item__val">Résiduel 0.62 mm</span>
+            </div>
+          </div>
+          <div class="system-item" data-item="ref">
+            <span class="system-item__check" aria-hidden="true">✓</span>
+            <div class="system-item__body">
+              <span class="system-item__label">Référence</span>
+              <span class="system-item__val">12:34 · board vide</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ============================================
+         ACTIONS : Recalibrer · Menu · Démarrer
+         ============================================ -->
+    <div class="actions">
+      <button class="btn" id="recalibBtn" onclick="window.location.href='calibration.html'">
+        <span class="btn__icon">⊞</span>
+        <span>Recalibrer</span>
+      </button>
+      <button class="btn" id="menuBtn">
+        <span class="btn__icon">☰</span>
+        <span>Menu</span>
+      </button>
+      <button class="btn btn--primary" id="startBtn" aria-label="Démarrer la partie">
+        <span>Démarrer la partie</span>
+        <span class="btn__icon">→</span>
+      </button>
+    </div>
+
+    <!-- ============================================
+         TICKER
+         ============================================ -->
+    <div class="ticker" aria-hidden="true">
+      <div class="ticker__track">
+        <span><span class="ticker__star">★</span> DART-ESIR FANZINE ED.</span>
+        <span>SETUP · PRÊT À LANCER</span>
+        <span>● 3 CAMS SYNCHRO · 60 FPS</span>
+        <span>RÉSIDUEL 0.62 MM</span>
+        <span>RÉFÉRENCE CAPTURÉE 12:34</span>
+        <span><span class="ticker__star">★</span> BOARD V3 · CONF. 0.97</span>
+        <span><span class="ticker__star">★</span> DART-ESIR FANZINE ED.</span>
+        <span>SETUP · PRÊT À LANCER</span>
+        <span>● 3 CAMS SYNCHRO · 60 FPS</span>
+        <span>RÉSIDUEL 0.62 MM</span>
+        <span>RÉFÉRENCE CAPTURÉE 12:34</span>
+        <span><span class="ticker__star">★</span> BOARD V3 · CONF. 0.97</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============================================
+       MODAL MENU (mêmes actions que dans game.html)
+       ============================================ -->
+  <div class="modal" role="dialog" aria-label="Menu setup">
+    <div class="modal__sheet">
+      <div class="modal__shadow" aria-hidden="true"></div>
+      <header class="modal__head">
+        <h3 class="modal__title">Menu</h3>
+        <button class="modal__close" data-action="close-state" aria-label="Fermer">✕</button>
+      </header>
+      <div class="modal__list">
+        <button class="modal__action">
+          <span class="modal__icon">⊞</span>
+          <span>Recalibrer le système</span>
+        </button>
+        <button class="modal__action">
+          <span class="modal__icon">◉</span>
+          <span>Capturer la référence (board vide)</span>
+        </button>
+        <button class="modal__action">
+          <span class="modal__icon">⟲</span>
+          <span>Réinitialiser les joueurs</span>
+        </button>
+        <button class="modal__action modal__action--danger">
+          <span class="modal__icon">⏻</span>
+          <span>Quitter</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================
+       DEV BAR
+       ============================================ -->
+  <div class="devbar" id="devbar" aria-label="États d'écran (dev)">
+    <span class="devbar__label">État</span>
+    <button class="devbar__btn is-on" data-state="">Normal</button>
+    <button class="devbar__btn" data-state="state-warn">Cam HS</button>
+    <button class="devbar__btn" data-state="state-menu">Menu</button>
+  </div>
+
+  <script>
+    // ===== Interactions visuelles minimales (zéro logique métier) =====
+
+    // --- State setup côté UI ---
+    const state = {
+      mode: '501',
+      players: ['Titouan', 'Kévin', 'Paul'],
+    };
+
+    // ============================================================
+    //  Sélection du mode (3 cartes radio)
+    // ============================================================
+    document.querySelectorAll('.mode-card').forEach(card => {
+      card.addEventListener('click', () => {
+        document.querySelectorAll('.mode-card').forEach(c => {
+          c.classList.remove('is-active');
+          c.setAttribute('aria-checked', 'false');
+        });
+        card.classList.add('is-active');
+        card.setAttribute('aria-checked', 'true');
+        state.mode = card.dataset.mode;
+      });
+    });
+
+    // ============================================================
+    //  Liste joueurs : ajouter / retirer / renuméroter
+    // ============================================================
+    const list = document.getElementById('playerList');
+    const addBtn = document.getElementById('addPlayer');
+    const countEl = document.getElementById('playerCount');
+    const MAX = 8;
+
+    function renumber() {
+      const rows = list.querySelectorAll('.player-input');
+      rows.forEach((row, i) => {
+        row.dataset.idx = i;
+        row.querySelector('.player-input__num').textContent = `J.${i + 1}`;
+        row.querySelector('.player-input__name').setAttribute('aria-label', `Nom du joueur ${i + 1}`);
+        row.classList.toggle('is-active', i === 0); // 1er joueur = couleur active
+      });
+      countEl.textContent = `${rows.length} / ${MAX} INSCRITS`;
+      addBtn.toggleAttribute('disabled', rows.length >= MAX);
+      // Sync state.players
+      state.players = Array.from(rows).map(r => r.querySelector('.player-input__name').value);
+    }
+
+    function buildRow(name) {
+      const row = document.createElement('div');
+      row.className = 'player-input';
+      row.innerHTML = `
+        <span class="player-input__num">J.?</span>
+        <input type="text" value="${name}" class="player-input__name" maxlength="14">
+        <button class="player-input__remove" aria-label="Retirer ce joueur">✕</button>
+      `;
+      bindRow(row);
+      return row;
+    }
+
+    function bindRow(row) {
+      row.querySelector('.player-input__remove').addEventListener('click', () => {
+        // Garde-fou : au moins 1 joueur
+        if (list.querySelectorAll('.player-input').length <= 1) return;
+        row.remove();
+        renumber();
+      });
+      row.querySelector('.player-input__name').addEventListener('input', renumber);
+    }
+
+    // Bind les rows initiaux
+    list.querySelectorAll('.player-input').forEach(bindRow);
+
+    addBtn.addEventListener('click', () => {
+      const rows = list.querySelectorAll('.player-input');
+      if (rows.length >= MAX) return;
+      const defaults = ['Titouan', 'Kévin', 'Paul', 'Marie', 'Léa', 'Hugo', 'Sami', 'Inès'];
+      const taken = Array.from(rows).map(r => r.querySelector('.player-input__name').value);
+      const next = defaults.find(n => !taken.includes(n)) || `J.${rows.length + 1}`;
+      list.insertBefore(buildRow(next), addBtn);
+      renumber();
+    });
+
+    // ============================================================
+    //  Démarrer → game.html
+    // ============================================================
+    document.getElementById('startBtn').addEventListener('click', () => {
+      // En vrai : on passerait state.mode / state.players via querystring ou storage.
+      // Ici on navigue simplement vers l'écran de jeu.
+      window.location.href = 'game.html';
+    });
+
+    // ============================================================
+    //  États (dev bar, menu, etc.)
+    // ============================================================
+    const body = document.body;
+    const devbar = document.getElementById('devbar');
+
+    function setState(s) {
+      body.className = s || '';
+      devbar.querySelectorAll('.devbar__btn').forEach(b =>
+        b.classList.toggle('is-on', (b.dataset.state || '') === (s || ''))
+      );
+      // En mode "warn", on simule cam-B HS et référence à recapturer
+      applyWarnState(s === 'state-warn');
+    }
+
+    function applyWarnState(on) {
+      const camB = document.querySelector('.system-item[data-cam="B"]');
+      const ref  = document.querySelector('.system-item[data-item="ref"]');
+      if (camB) {
+        camB.classList.toggle('is-warning', on);
+        camB.querySelector('.cam-led').classList.toggle('is-ok', !on);
+        camB.querySelector('.cam-led').classList.toggle('is-err', on);
+        camB.querySelector('.system-item__val').textContent = on ? 'Hors-ligne · KO' : '60 fps · OK';
+      }
+      if (ref) {
+        ref.classList.toggle('is-warning', on);
+        ref.querySelector('.system-item__check').textContent = on ? '!' : '✓';
+        ref.querySelector('.system-item__val').textContent = on ? 'À recapturer' : '12:34 · board vide';
+      }
+      // Topbar cam status
+      const tb = document.querySelectorAll('.topbar__right .cam-led');
+      if (tb[1]) {
+        tb[1].classList.toggle('is-ok', !on);
+        tb[1].classList.toggle('is-err', on);
+      }
+    }
+
+    devbar.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-state]');
+      if (!btn) return;
+      setState(btn.dataset.state);
+    });
+
+    document.getElementById('menuBtn').addEventListener('click', () => setState('state-menu'));
+
+    document.querySelectorAll('[data-action="close-state"]').forEach(el =>
+      el.addEventListener('click', () => setState(''))
+    );
+    document.querySelector('.modal').addEventListener('click', (e) => {
+      if (e.target.classList.contains('modal')) setState('');
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') setState('');
+    });
+
+    // Horloge live
+    const clock = document.getElementById('clock');
+    function tick() {
+      const d = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      clock.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    tick();
+    setInterval(tick, 30 * 1000);
+  </script>
+</body>
+</html>

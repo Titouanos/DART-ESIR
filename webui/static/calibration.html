@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f3ecdb">
+  <title>DART-ESIR — Calibration 3 cams</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app">
+
+    <!-- TOPBAR -->
+    <header class="topbar">
+      <div class="topbar__brand">
+        <span class="topbar__logo" aria-hidden="true"></span>
+        DART-ESIR
+        <span class="topbar__sub">fanzine ed.</span>
+      </div>
+      <div class="topbar__mid">
+        <span class="topbar__mode">02 Setup</span>
+        <span class="topbar__meta">Calibration · 3 caméras</span>
+        <span class="stamp">● MAINTENANCE</span>
+      </div>
+      <div class="topbar__right">
+        <div class="cam-status">
+          <span class="cam-led is-ok"></span>
+          <span class="cam-led is-ok"></span>
+          <span class="cam-led is-ok"></span>
+          <span>3 cams · 60 fps</span>
+        </div>
+        <span class="clock" id="clock">21:34</span>
+      </div>
+    </header>
+
+    <!-- MAIN -->
+    <main class="main main--calib">
+
+      <!-- Head : titre + step -->
+      <header class="calib-head setup-head">
+        <div class="setup-head__left">
+          <span class="caption">FIG. 00 — CALIBRATION DU SYSTÈME</span>
+          <h1 class="setup-title">Aligner les <em>caméras.</em></h1>
+        </div>
+        <span class="stamp stamp--pink">● ÉTAPE 1 / 1</span>
+      </header>
+
+      <!-- === 3 feeds caméras === -->
+      <section class="cam-feeds" aria-label="Flux des 3 caméras">
+
+        <!-- CAM-A · seg 11 -->
+        <article class="cam-feed" data-cam="A">
+          <div class="cam-feed__view">
+            <span class="cam-feed__label">CAM-A · 60 FPS</span>
+            <span class="cam-feed__fps">1920×1080</span>
+            <svg class="cam-feed__svg" viewBox="0 0 400 300" data-feed="A"></svg>
+          </div>
+          <div class="cam-feed__foot">
+            <div class="cam-feed__row">
+              <span class="cam-feed__name">Cam-A</span>
+              <span class="cam-feed__seg">Face · Seg 11</span>
+            </div>
+            <div class="cam-feed__metrics">
+              <span class="cam-feed__metric">Homographie OK</span>
+              <span class="cam-feed__metric cam-feed__metric--good">Damier 9×6</span>
+              <span class="cam-feed__metric">Tip Δ 0.4 mm</span>
+            </div>
+          </div>
+        </article>
+
+        <!-- CAM-B · seg 18 -->
+        <article class="cam-feed" data-cam="B">
+          <div class="cam-feed__view">
+            <span class="cam-feed__label">CAM-B · 60 FPS</span>
+            <span class="cam-feed__fps">1920×1080</span>
+            <svg class="cam-feed__svg" viewBox="0 0 400 300" data-feed="B"></svg>
+          </div>
+          <div class="cam-feed__foot">
+            <div class="cam-feed__row">
+              <span class="cam-feed__name">Cam-B</span>
+              <span class="cam-feed__seg">Face · Seg 18</span>
+            </div>
+            <div class="cam-feed__metrics">
+              <span class="cam-feed__metric">Homographie OK</span>
+              <span class="cam-feed__metric cam-feed__metric--good">Damier 9×6</span>
+              <span class="cam-feed__metric">Tip Δ 0.6 mm</span>
+            </div>
+          </div>
+        </article>
+
+        <!-- CAM-C · seg 6 (MASTER) -->
+        <article class="cam-feed" data-cam="C">
+          <div class="cam-feed__view">
+            <span class="cam-feed__label">CAM-C · MASTER · 60 FPS</span>
+            <span class="cam-feed__fps">1920×1080</span>
+            <svg class="cam-feed__svg" viewBox="0 0 400 300" data-feed="C"></svg>
+          </div>
+          <div class="cam-feed__foot">
+            <div class="cam-feed__row">
+              <span class="cam-feed__name">Cam-C</span>
+              <span class="cam-feed__seg">Face · Seg 6 · Master</span>
+            </div>
+            <div class="cam-feed__metrics">
+              <span class="cam-feed__metric">Homographie OK</span>
+              <span class="cam-feed__metric cam-feed__metric--good">Damier 9×6</span>
+              <span class="cam-feed__metric">Tip Δ 0.3 mm</span>
+            </div>
+          </div>
+        </article>
+
+      </section>
+
+      <!-- === Side : checklist + schéma + résiduel === -->
+      <aside class="calib-side">
+
+        <!-- Résiduel RANSAC -->
+        <section class="calib-residual">
+          <span class="calib-residual__val">0.62</span>
+          <span class="calib-residual__unit">mm</span>
+          <div class="calib-residual__meta">
+            <span class="calib-residual__label">Résiduel RANSAC</span>
+            <span class="calib-residual__threshold">Seuil &lt; 1.0 mm</span>
+          </div>
+        </section>
+
+        <!-- Schéma vue dessus -->
+        <section class="calib-schema">
+          <div class="checklist__head">
+            <span class="caption">FIG. 01 — SCHÉMA · VUE DESSUS · 1:12</span>
+          </div>
+          <svg class="calib-schema__svg" viewBox="0 0 600 380" xmlns="http://www.w3.org/2000/svg">
+            <!-- Grille -->
+            <defs>
+              <pattern id="grid-cal" width="20" height="20" patternUnits="userSpaceOnUse">
+                <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#171717" stroke-opacity="0.12" stroke-width="0.5"/>
+              </pattern>
+            </defs>
+            <rect width="600" height="380" fill="url(#grid-cal)"/>
+
+            <!-- Board (cible) -->
+            <g transform="translate(300, 100)">
+              <circle r="48" fill="#171717"/>
+              <circle r="36" fill="#ff5b9c"/>
+              <circle r="24" fill="#171717"/>
+              <circle r="14" fill="#2e3aa8"/>
+              <circle r="6" fill="#ff5b9c"/>
+              <text y="76" text-anchor="middle" font-family="IBM Plex Mono" font-size="11" fill="#171717" letter-spacing="2">CIBLE · 1.73m</text>
+            </g>
+
+            <!-- Caméras -->
+            <g>
+              <!-- CAM-A (seg 11) -->
+              <line x1="130" y1="240" x2="300" y2="110" stroke="#ff5b9c" stroke-width="1" stroke-dasharray="4 4" style="mix-blend-mode: multiply"/>
+              <circle cx="130" cy="240" r="11" fill="#f3ecdb" stroke="#ff5b9c" stroke-width="2"/>
+              <circle cx="130" cy="240" r="4" fill="#ff5b9c"/>
+              <text x="130" y="266" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#171717" letter-spacing="1.5">CAM-A · SEG 11</text>
+
+              <!-- CAM-B (seg 18) -->
+              <line x1="470" y1="240" x2="300" y2="110" stroke="#2e3aa8" stroke-width="1" stroke-dasharray="4 4" style="mix-blend-mode: multiply"/>
+              <circle cx="470" cy="240" r="11" fill="#f3ecdb" stroke="#2e3aa8" stroke-width="2"/>
+              <circle cx="470" cy="240" r="4" fill="#2e3aa8"/>
+              <text x="470" y="266" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#171717" letter-spacing="1.5">CAM-B · SEG 18</text>
+
+              <!-- CAM-C (seg 6, MASTER) -->
+              <line x1="300" y1="320" x2="300" y2="110" stroke="#171717" stroke-width="1" stroke-dasharray="4 4"/>
+              <circle cx="300" cy="320" r="11" fill="#171717"/>
+              <circle cx="300" cy="320" r="4" fill="#f3ecdb"/>
+              <text x="300" y="346" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#171717" letter-spacing="1.5">CAM-C · MASTER · SEG 6</text>
+            </g>
+
+            <!-- Oche (ligne de tir) -->
+            <line x1="100" y1="362" x2="500" y2="362" stroke="#171717" stroke-width="2"/>
+            <text x="300" y="376" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#171717" letter-spacing="2">OCHE · DIST. 2.37 M</text>
+          </svg>
+        </section>
+
+        <!-- Checklist -->
+        <section class="checklist">
+          <div class="checklist__head">
+            <span class="caption">FIG. 02 — CHECKLIST</span>
+            <span class="checklist__progress" id="checklistProgress">4 / 6 OK</span>
+          </div>
+
+          <div class="checklist__row is-done">
+            <button class="checklist__box" aria-checked="true" role="checkbox">✓</button>
+            <span class="checklist__label">Cam-A · pose & focus</span>
+            <span class="checklist__status">OK</span>
+          </div>
+          <div class="checklist__row is-done">
+            <button class="checklist__box" aria-checked="true" role="checkbox">✓</button>
+            <span class="checklist__label">Cam-B · pose & focus</span>
+            <span class="checklist__status">OK</span>
+          </div>
+          <div class="checklist__row is-done">
+            <button class="checklist__box" aria-checked="true" role="checkbox">✓</button>
+            <span class="checklist__label">Cam-C · master</span>
+            <span class="checklist__status">OK</span>
+          </div>
+          <div class="checklist__row is-done">
+            <button class="checklist__box" aria-checked="true" role="checkbox">✓</button>
+            <span class="checklist__label">Damier 9×6 capturé</span>
+            <span class="checklist__status">OK</span>
+          </div>
+          <div class="checklist__row">
+            <button class="checklist__box" aria-checked="false" role="checkbox"></button>
+            <span class="checklist__label">Centre cible aligné</span>
+            <span class="checklist__status">À faire</span>
+          </div>
+          <div class="checklist__row">
+            <button class="checklist__box" aria-checked="false" role="checkbox"></button>
+            <span class="checklist__label">Test 3 fléchettes</span>
+            <span class="checklist__status">À faire</span>
+          </div>
+        </section>
+
+      </aside>
+
+    </main>
+
+    <!-- ACTIONS -->
+    <div class="actions">
+      <button class="btn" onclick="window.location.href='setup.html'">
+        <span class="btn__icon">←</span>
+        <span>Retour setup</span>
+      </button>
+      <button class="btn" id="captureBtn">
+        <span class="btn__icon">◉</span>
+        <span>Capturer référence</span>
+      </button>
+      <button class="btn btn--primary" id="recalibBtn">
+        <span>Recalibrer</span>
+        <span class="btn__icon">⊞</span>
+      </button>
+    </div>
+
+    <!-- TICKER -->
+    <div class="ticker" aria-hidden="true">
+      <div class="ticker__track">
+        <span><span class="ticker__star">★</span> DART-ESIR FANZINE ED.</span>
+        <span>CALIBRATION · 3 CAMS SYNCHRO 60 FPS</span>
+        <span>RÉSIDUEL 0.62 MM · SEUIL 1.0</span>
+        <span>HOMOGRAPHIE OK SUR 3/3</span>
+        <span><span class="ticker__star">★</span> RANSAC · DAMIER 9×6</span>
+        <span>LATENCE 92 MS</span>
+        <span><span class="ticker__star">★</span> DART-ESIR FANZINE ED.</span>
+        <span>CALIBRATION · 3 CAMS SYNCHRO 60 FPS</span>
+        <span>RÉSIDUEL 0.62 MM · SEUIL 1.0</span>
+        <span>HOMOGRAPHIE OK SUR 3/3</span>
+        <span><span class="ticker__star">★</span> RANSAC · DAMIER 9×6</span>
+        <span>LATENCE 92 MS</span>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ===== Génération des 3 vues caméras (mocks SVG du board vu de l'angle de chaque cam) =====
+    function buildFeed(svg, camId) {
+      if (!svg) return;
+      const NS = 'http://www.w3.org/2000/svg';
+      const el = (tag, attrs) => {
+        const e = document.createElementNS(NS, tag);
+        for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+        return e;
+      };
+      // Fond du flux : ink (bg) + un peu de grain via dots
+      svg.appendChild(el('rect', { x: 0, y: 0, width: 400, height: 300, fill: '#171717' }));
+
+      // Dot grid (faux grain)
+      for (let x = 4; x < 400; x += 16) {
+        for (let y = 4; y < 300; y += 16) {
+          if (Math.random() > 0.85) {
+            svg.appendChild(el('circle', { cx: x, cy: y, r: 0.6, fill: '#f3ecdb', 'fill-opacity': 0.15 }));
+          }
+        }
+      }
+
+      // Mire de calibration : croix au centre + grille de damier en perspective
+      const cx = 200, cy = 140;
+
+      // Mini board (vu en oblique selon cam)
+      // CAM-A regarde le board de gauche → ovale incliné droite
+      // CAM-B → ovale incliné gauche
+      // CAM-C (master, face) → ovale horizontal aplati
+      let skewX = 0, scaleY = 0.78;
+      if (camId === 'A') { skewX = 8; scaleY = 0.62; }
+      if (camId === 'B') { skewX = -8; scaleY = 0.62; }
+      if (camId === 'C') { skewX = 0; scaleY = 0.85; }
+
+      const board = el('g', { transform: `translate(${cx} ${cy}) skewX(${skewX}) scale(1 ${scaleY})` });
+      // Anneaux du board (couleurs riso)
+      board.appendChild(el('circle', { cx: 0, cy: 0, r: 88, fill: '#0a0a0a', stroke: '#f3ecdb', 'stroke-width': 1, 'stroke-opacity': 0.4 }));
+      // 20 secteurs : on dessine juste 2 anneaux colorés pour signaler
+      board.appendChild(el('circle', { cx: 0, cy: 0, r: 76, fill: 'none', stroke: '#ff5b9c', 'stroke-width': 4 }));
+      board.appendChild(el('circle', { cx: 0, cy: 0, r: 46, fill: 'none', stroke: '#2e3aa8', 'stroke-width': 3 }));
+      board.appendChild(el('circle', { cx: 0, cy: 0, r: 12, fill: '#2e3aa8' }));
+      board.appendChild(el('circle', { cx: 0, cy: 0, r: 5, fill: '#ff5b9c' }));
+      // 20 wires
+      for (let i = 0; i < 20; i++) {
+        const a = (i * 18 - 90) * Math.PI / 180;
+        const x1 = Math.cos(a) * 12;
+        const y1 = Math.sin(a) * 12;
+        const x2 = Math.cos(a) * 86;
+        const y2 = Math.sin(a) * 86;
+        board.appendChild(el('line', { x1, y1, x2, y2, stroke: '#f3ecdb', 'stroke-width': 0.5, 'stroke-opacity': 0.4 }));
+      }
+      svg.appendChild(board);
+
+      // Crosshair calibration (4 coins du frame + centre)
+      const ch = el('g', { stroke: '#f3ecdb', 'stroke-width': 1, fill: 'none', 'stroke-opacity': 0.8 });
+      // Coins (L-marks)
+      [[20, 20], [380, 20], [20, 280], [380, 280]].forEach(([x, y]) => {
+        const sx = x === 20 ? 1 : -1;
+        const sy = y === 20 ? 1 : -1;
+        ch.appendChild(el('path', { d: `M ${x} ${y + sy * 14} L ${x} ${y} L ${x + sx * 14} ${y}` }));
+      });
+      // Centre
+      ch.appendChild(el('line', { x1: cx - 18, y1: cy, x2: cx - 6, y2: cy }));
+      ch.appendChild(el('line', { x1: cx + 6, y1: cy, x2: cx + 18, y2: cy }));
+      ch.appendChild(el('line', { x1: cx, y1: cy - 18, x2: cx, y2: cy - 6 }));
+      ch.appendChild(el('line', { x1: cx, y1: cy + 6, x2: cx, y2: cy + 18 }));
+      ch.appendChild(el('circle', { cx, cy, r: 26, 'stroke-dasharray': '3 3' }));
+      svg.appendChild(ch);
+
+      // Labels coordonnées (riso techy)
+      const txt = (x, y, t) => svg.appendChild(el('text', { x, y, 'font-family': 'IBM Plex Mono', 'font-size': 8, fill: '#f3ecdb', 'fill-opacity': 0.7, 'letter-spacing': 1 })).textContent = t;
+      txt(28, 36, 'X 0000');
+      txt(346, 36, 'Y 0000');
+      txt(28, 274, 'H 0.97');
+      txt(330, 274, 'σ 0.62');
+    }
+
+    document.querySelectorAll('.cam-feed__svg').forEach(svg => {
+      buildFeed(svg, svg.dataset.feed);
+    });
+
+    // ===== Checklist toggle =====
+    document.querySelectorAll('.checklist__row').forEach(row => {
+      const box = row.querySelector('.checklist__box');
+      const status = row.querySelector('.checklist__status');
+      box.addEventListener('click', () => {
+        const done = row.classList.toggle('is-done');
+        box.setAttribute('aria-checked', done);
+        box.textContent = done ? '✓' : '';
+        status.textContent = done ? 'OK' : 'À faire';
+        const total = document.querySelectorAll('.checklist__row').length;
+        const ok = document.querySelectorAll('.checklist__row.is-done').length;
+        document.getElementById('checklistProgress').textContent = `${ok} / ${total} OK`;
+      });
+    });
+
+    // Init checklist counter
+    (() => {
+      const total = document.querySelectorAll('.checklist__row').length;
+      const ok = document.querySelectorAll('.checklist__row.is-done').length;
+      document.getElementById('checklistProgress').textContent = `${ok} / ${total} OK`;
+    })();
+
+    // ===== Actions =====
+    document.getElementById('captureBtn').addEventListener('click', () => {
+      // simu : flash visuel sur les 3 feeds
+      document.querySelectorAll('.cam-feed').forEach(c => {
+        c.style.outline = '3px solid #ff5b9c';
+        setTimeout(() => c.style.outline = '', 350);
+      });
+    });
+    document.getElementById('recalibBtn').addEventListener('click', () => {
+      // simu : reset checklist
+      document.querySelectorAll('.checklist__row').forEach(r => {
+        r.classList.remove('is-done');
+        r.querySelector('.checklist__box').textContent = '';
+        r.querySelector('.checklist__box').setAttribute('aria-checked', 'false');
+        r.querySelector('.checklist__status').textContent = 'À faire';
+      });
+      document.getElementById('checklistProgress').textContent = `0 / 6 OK`;
+    });
+
+    // Horloge live
+    const clock = document.getElementById('clock');
+    function tick() {
+      const d = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      clock.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    tick();
+    setInterval(tick, 30 * 1000);
+  </script>
+</body>
+</html>

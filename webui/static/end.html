@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f3ecdb">
+  <title>DART-ESIR — Résultats</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!--
+    Page de fin de partie : winner spotlight + podium + stats.
+    Boutons "Rejouer" (mêmes joueurs/mode) et "Nouvelle partie" (retour au setup).
+  -->
+
+  <div class="app">
+
+    <!-- ============================================
+         TOPBAR
+         ============================================ -->
+    <header class="topbar">
+      <div class="topbar__brand">
+        <span class="topbar__logo" aria-hidden="true"></span>
+        DART-ESIR
+        <span class="topbar__sub">fanzine ed.</span>
+      </div>
+      <div class="topbar__mid">
+        <span class="topbar__mode">501</span>
+        <span class="topbar__meta"><strong>Partie terminée</strong></span>
+        <span class="topbar__meta">21 fléchettes · 7 volées</span>
+        <span class="stamp stamp--pink">● FINI</span>
+      </div>
+      <div class="topbar__right">
+        <div class="cam-status" title="État des 3 caméras">
+          <span class="cam-led is-ok"></span>
+          <span class="cam-led is-ok"></span>
+          <span class="cam-led is-ok"></span>
+          <span>3 cams · idle</span>
+        </div>
+        <span class="clock" id="clock">21:48</span>
+      </div>
+    </header>
+
+    <!-- ============================================
+         MAIN : header + winner + podium + stats
+         ============================================ -->
+    <main class="main main--end">
+
+      <!-- Header de page -->
+      <header class="setup-head">
+        <div class="setup-head__left">
+          <span class="caption">FIG. 00 — RÉSULTATS</span>
+          <h1 class="setup-title">Résultats <em>finaux.</em></h1>
+        </div>
+        <span class="stamp stamp--blue">501 · CHECKOUT</span>
+      </header>
+
+      <!-- === Winner spotlight === -->
+      <section class="winner" aria-label="Vainqueur">
+        <div class="winner__bg" aria-hidden="true"></div>
+        <div class="winner__inner">
+          <span class="winner__caption">★ CHECKOUT — DOUBLE 19</span>
+          <h2 class="winner__name" data-text="Titouan">Titouan</h2>
+          <span class="winner__verdict">Gagne en 21 fléchettes · moyenne 71.5</span>
+          <div class="winner__line">
+            <span class="stamp">501 → 0</span>
+            <span class="stamp stamp--blue">Best 140</span>
+            <span class="stamp">7 volées</span>
+            <span class="stamp">0 bust</span>
+            <span class="stamp stamp--pink">FINISH T20→T20→D19</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- === Podium + Stats === -->
+      <div class="end-grid">
+
+        <!-- Classement final -->
+        <section class="podium">
+          <span class="caption">FIG. 01 — CLASSEMENT FINAL</span>
+          <div class="podium__list">
+            <div class="podium__row is-winner">
+              <span class="podium__rank">01</span>
+              <span class="podium__name">Titouan</span>
+              <span class="podium__label">vainqueur</span>
+              <span class="podium__score">0</span>
+            </div>
+            <div class="podium__row">
+              <span class="podium__rank">02</span>
+              <span class="podium__name">Kévin</span>
+              <span class="podium__label">2ᵉ place</span>
+              <span class="podium__score">87</span>
+            </div>
+            <div class="podium__row">
+              <span class="podium__rank">03</span>
+              <span class="podium__name">Paul</span>
+              <span class="podium__label">3ᵉ place</span>
+              <span class="podium__score">156</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Stats détaillées -->
+        <section class="stats-table">
+          <span class="caption">FIG. 02 — STATISTIQUES</span>
+          <div class="stats-grid">
+            <!-- en-têtes -->
+            <span class="stats-grid__head">Joueur</span>
+            <span class="stats-grid__head">Moy. tour</span>
+            <span class="stats-grid__head">Meilleur</span>
+            <span class="stats-grid__head">Busts</span>
+            <span class="stats-grid__head">Fléchettes</span>
+
+            <!-- Titouan (vainqueur) -->
+            <span class="stats-grid__name stats-grid__name--winner">Titouan</span>
+            <span class="stats-grid__val stats-grid__val--accent">71.5</span>
+            <span class="stats-grid__val">140</span>
+            <span class="stats-grid__val">0</span>
+            <span class="stats-grid__val">21</span>
+
+            <!-- Kévin -->
+            <span class="stats-grid__name">Kévin</span>
+            <span class="stats-grid__val">54.8</span>
+            <span class="stats-grid__val">97</span>
+            <span class="stats-grid__val">2</span>
+            <span class="stats-grid__val">33</span>
+
+            <!-- Paul -->
+            <span class="stats-grid__name">Paul</span>
+            <span class="stats-grid__val">48.2</span>
+            <span class="stats-grid__val">81</span>
+            <span class="stats-grid__val">3</span>
+            <span class="stats-grid__val">42</span>
+          </div>
+        </section>
+
+      </div>
+
+    </main>
+
+    <!-- ============================================
+         ACTIONS : Résumé · Nouvelle partie · Rejouer
+         ============================================ -->
+    <div class="actions">
+      <button class="btn" id="summaryBtn">
+        <span class="btn__icon">▦</span>
+        <span>Résumé détaillé</span>
+      </button>
+      <button class="btn" id="newGameBtn">
+        <span class="btn__icon">+</span>
+        <span>Nouvelle partie</span>
+      </button>
+      <button class="btn btn--primary" id="replayBtn">
+        <span>Rejouer</span>
+        <span class="btn__icon">↻</span>
+      </button>
+    </div>
+
+    <!-- ============================================
+         TICKER
+         ============================================ -->
+    <div class="ticker" aria-hidden="true">
+      <div class="ticker__track">
+        <span><span class="ticker__star">★</span> DART-ESIR FANZINE ED.</span>
+        <span>TITOUAN · 501 → 0 EN 21 FLÉCHETTES</span>
+        <span>FINISH T20 → T20 → D19</span>
+        <span>MOYENNE 71.5 · BEST 140</span>
+        <span><span class="ticker__star">★</span> TIRAGE LIMITÉ · 40 EX.</span>
+        <span>★ PINK FLUO 803 · FEDERAL BLUE ★</span>
+        <span><span class="ticker__star">★</span> DART-ESIR FANZINE ED.</span>
+        <span>TITOUAN · 501 → 0 EN 21 FLÉCHETTES</span>
+        <span>FINISH T20 → T20 → D19</span>
+        <span>MOYENNE 71.5 · BEST 140</span>
+        <span><span class="ticker__star">★</span> TIRAGE LIMITÉ · 40 EX.</span>
+        <span>★ PINK FLUO 803 · FEDERAL BLUE ★</span>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ===== Navigation =====
+    document.getElementById('replayBtn').addEventListener('click', () => {
+      // Rejouer = relancer la même partie avec les mêmes joueurs/mode
+      window.location.href = 'game.html';
+    });
+    document.getElementById('newGameBtn').addEventListener('click', () => {
+      // Nouvelle partie = retour au setup
+      window.location.href = 'setup.html';
+    });
+    document.getElementById('summaryBtn').addEventListener('click', () => {
+      // Placeholder : ouvrirait une vue détaillée tour-par-tour
+      alert('Résumé détaillé tour-par-tour — à brancher sur les données réelles.');
+    });
+
+    // Horloge live
+    const clock = document.getElementById('clock');
+    function tick() {
+      const d = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      clock.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    tick();
+    setInterval(tick, 30 * 1000);
+  </script>
+</body>
+</html>
