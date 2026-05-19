@@ -298,6 +298,17 @@ function appBoot() {
 window.addEventListener('load', appBoot);
 
 // ───────────────────────────────────────────────────────────────────
+// Toast automatique sur ack en erreur — toute commande qui échoue côté
+// serveur remonte ici. Les pages spécifiques peuvent toujours s'abonner
+// à 'ack' pour réagir spécifiquement (ex: setup.js qui navigue).
+// ───────────────────────────────────────────────────────────────────
+ws.on('ack', (p) => {
+  if (p && p.ok === false && p.msg) {
+    showToast(`Erreur: ${p.msg}`, 4000);
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────
 // Détection "partie perdue" : si un nouveau snapshot arrive avec un
 // game_id différent APRÈS une déco, l'utilisateur a perdu son état
 // (typiquement crash + redémarrage main.py). On le signale via toast.

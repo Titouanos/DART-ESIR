@@ -154,28 +154,35 @@ class DartVision:
     def calibrate(self) -> bool:
         if not self.recalibrate:
             loaded = load_calibrations()
-            # Filtre l'artefact `cam_index=1` (nœud metadata du Pi) qui pollue
-            # parfois calibration.json suite à une session de calibration sur le
-            # mauvais index. On le loggue explicitement pour repérer une éventuelle
-            # régression de calibration.py.
-            filtered = [c for c in loaded if c.cam_index not in self._metadata_nodes()]
-            if len(filtered) < len(loaded):
-                dropped = [c.cam_index for c in loaded if c.cam_index in self._metadata_nodes()]
-                logger.warning(
-                    "calibration.json contient des cam_index sans données utiles "
-                    "(metadata nodes du Pi), ignorés: %s", dropped)
-                # On affiche aussi en stdout au cas où le root logger ne soit pas configuré.
-                print(f"[WARN] calibration.json: cam_index metadata ignorés: {dropped}")
-            # Réordonne les calibrators pour matcher l'ordre de config.CAM_INDEXES
-            # (= l'ordre d'ouverture des caps), sinon caps[i] et calibrators[i]
-            # référeraient à des cams physiques différentes → warps cassés.
-            by_idx = {c.cam_index: c for c in filtered}
-            ordered = [by_idx[i] for i in config.CAM_INDEXES if i in by_idx]
-            if ordered and len(ordered) >= len(config.CAM_INDEXES):
+            # Restreint et ordonne les calibrators selon config.CAM_INDEXES.
+            # Tout calibrator dont cam_index n'est pas dans CAM_INDEXES est
+            # ignoré — ça absorbe naturellement les artefacts (metadata nodes,
+            # vieilles entrées d'une calibration antérieure sur un autre port
+            # USB, etc.) sans dépendre d'une liste statique.
+            by_idx = {c.cam_index: c for c in loaded}
+            wanted = list(config.CAM_INDEXES)
+            ordered = [by_idx[i] for i in wanted if i in by_idx]
+            stale = [c.cam_index for c in loaded if c.cam_index not in wanted]
+            if stale:
+                msg = (f"calibration.json contient des cam_index hors "
+                       f"CAM_INDEXES={wanted}, ignorés: {stale}")
+                logger.warning(msg)
+                print(f"[WARN] {msg}")
+            if ordered and len(ordered) == len(wanted):
                 self.calibrators = ordered
                 self._open_all_cameras()
                 self._init_fusion()
                 return True
+            # Si on arrive ici : calibration incomplète. En mode headless on
+            # ne peut PAS lancer le flow interactif → on échoue clean plutôt
+            # que de crasher sur Qt.
+            if self.headless:
+                missing = [i for i in wanted if i not in by_idx]
+                msg = (f"Calibration manquante pour cam(s) {missing}. "
+                       f"Recalibre via main.py sans --headless.")
+                logger.error(msg)
+                print(f"[ERROR] {msg}")
+                return False
 
         # Release any open cameras before calibration (USB bandwidth)
         for cap in self.caps:
@@ -253,7 +260,18 @@ class DartVision:
         return {1, 3, 5}
 
     def start_recalibration(self) -> None:
-        """Marque qu'une recalibration doit être faite. Consommé en début de boucle."""
+        """Demande une recalibration. Refuse explicitement en mode headless.
+
+        `calibrate_all_cameras()` (dans calibration.py) est un flow interactif
+        avec `cv2.namedWindow` + clics souris pour les 4 points. Sans X server
+        on crashe sur "qt.qpa.plugin xcb". Refuser ici avec un message clair
+        évite que le bouton "Recalibrer" du web fasse tomber tout le pipeline.
+        """
+        if self.headless:
+            raise RuntimeError(
+                "Recalibration interactive non disponible en mode --headless. "
+                "Lance main.py sans --headless avec un écran HDMI branché."
+            )
         self._recalib_requested = True
 
     def request_shutdown(self) -> None:
