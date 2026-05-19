@@ -174,34 +174,6 @@ class DartVision:
         self.cam_visible = [True] * len(self.caps)
         print(f"  {len(self.caps)} camera(s) ready.")
 
-    def calibrate(self) -> bool:
-        if not self.recalibrate:
-            loaded = load_calibrations()
-            if loaded and len(loaded) >= len(config.CAM_INDEXES):
-                self.calibrators = loaded[:len(config.CAM_INDEXES)]
-                self._open_all_cameras()
-                self._init_fusion()
-                return True
-
-        # Release any open cameras before calibration (USB bandwidth)
-        for cap in self.caps:
-            cap.release()
-        self.caps = []
-
-        result = calibrate_all_cameras(
-            None, config.CAM_INDEXES, self.cam_positions_override
-        )
-        if result is None:
-            return False
-
-        self.calibrators = result
-        save_calibrations(self.calibrators)
-
-        # Reopen all cameras after calibration
-        self._open_all_cameras()
-        self._init_fusion()
-        return True
-
     def _init_fusion(self):
         """Initialize fusion engine from calibration data."""
         confidences = []
