@@ -178,30 +178,7 @@
 
   </div>
 
-  <script>
-    // ===== Navigation =====
-    document.getElementById('replayBtn').addEventListener('click', () => {
-      // Rejouer = relancer la même partie avec les mêmes joueurs/mode
-      window.location.href = 'game.html';
-    });
-    document.getElementById('newGameBtn').addEventListener('click', () => {
-      // Nouvelle partie = retour au setup
-      window.location.href = 'setup.html';
-    });
-    document.getElementById('summaryBtn').addEventListener('click', () => {
-      // Placeholder : ouvrirait une vue détaillée tour-par-tour
-      alert('Résumé détaillé tour-par-tour — à brancher sur les données réelles.');
-    });
-
-    // Horloge live
-    const clock = document.getElementById('clock');
-    function tick() {
-      const d = new Date();
-      const pad = n => String(n).padStart(2, '0');
-      clock.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    }
-    tick();
-    setInterval(tick, 30 * 1000);
-  </script>
+  <script src="/static/app.js"></script>
+  <script src="/static/end.js"></script>
 </body>
 </html>
