@@ -145,19 +145,28 @@ const ws = new DartWS();
        proprement plutôt que de supprimer le HTML qui appartient au design. */
     .devbar { display: none !important; }
     /* Bouton désactivé indépendamment de la déco WS (ex: recalibration en
-       headless). On signale visuellement avec hachures discrètes pour qu'on
-       comprenne que c'est volontaire, pas un bug. */
+       headless). On signale visuellement avec hachures + couleur paper pour
+       qu'on comprenne que c'est volontaire, pas un bug.
+       !important partout : .btn--primary applique background shorthand qui
+       reset background-image, et nos sélecteurs ont la même spécificité —
+       sans !important, certaines règles sont écrasées. */
     .btn.is-disabled-headless,
     .btn[disabled] {
-      opacity: 0.5;
-      cursor: not-allowed;
-      pointer-events: none;
+      opacity: 0.5 !important;
+      cursor: not-allowed !important;
+      pointer-events: none !important;
+      background-color: var(--paper, #f3ecdb) !important;
+      color: var(--ink, #171717) !important;
       background-image: repeating-linear-gradient(
         135deg,
-        transparent, transparent 6px,
-        rgba(0,0,0,0.08) 6px, rgba(0,0,0,0.08) 8px
-      );
+        transparent 0 6px,
+        rgba(23, 23, 23, 0.22) 6px 8px
+      ) !important;
     }
+    /* Bonus : annule l'éventuel ::after de .btn--primary (overlay pink hover)
+       quand le bouton est désactivé — il ne doit pas trahir un effet "actif". */
+    .btn.is-disabled-headless::after,
+    .btn[disabled]::after { display: none !important; }
     /* Toast UI : message éphémère en bas d'écran, non-bloquant. */
     .app-toast {
       position: fixed; left: 50%; bottom: 60px;

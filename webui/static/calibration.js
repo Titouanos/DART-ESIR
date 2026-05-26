@@ -14,13 +14,16 @@
 (function () {
   const { ws, $, $$, esc } = window.DartApp;
 
-  // Le design du zip applique des `::after` overlay mix-blend-mode:multiply
-  // sur chaque .cam-feed__view (pink/blue/paper) — c'était fait pour le look
-  // fanzine sur les SVG mockés du design. Sur un vrai flux MJPEG (image
-  // naturellement sombre), ça écrase tout en noir. On neutralise via une
-  // class `.is-live` que les overlays CSS savent ignorer.
+  // Le design du zip applique DEUX couches de décoration sur chaque cam-feed :
+  //   1. `.cam-feed::before`  → offset-shadow décalé (top:5/left:-6/bottom:-7)
+  //      avec mix-blend-mode multiply et couleur pink/blue/ink (le 3e en noir
+  //      à 45% opacity). Crée la "zone noire dépassant sous la card".
+  //   2. `.cam-feed__view::after` → overlay riso teinté SUR le flux.
+  // Les deux faisaient sens sur des SVG mockés clairs ; sur un vrai flux MJPEG
+  // sombre, ça écrase l'image en noir. On désactive les deux via `.is-live`.
   (function injectCalibCSS() {
     const css = `
+      .cam-feed.is-live::before { display: none !important; }
       .cam-feed.is-live .cam-feed__view::after { display: none !important; }
       .cam-feed.is-live img.cam-feed__svg {
         width: 100%; height: 100%; display: block; object-fit: cover;
@@ -75,6 +78,22 @@
     if (residEl && status.calibration) {
       residEl.textContent = (status.calibration.residual_mm || 0).toFixed(2);
     }
+
+    // Schéma "FIG. 01 — VUE DESSUS" : 3 <text> dans le SVG portent les
+    // labels par cam. Le design les codait en dur (CAM-A · SEG 11, etc.) ;
+    // on les hydrate depuis system_status. Sélection par préfixe du
+    // textContent initial (pas de modif HTML requise).
+    const schemaTexts = $$('.calib-schema__svg text');
+    schemaTexts.forEach(t => {
+      const orig = (t._origText || (t._origText = t.textContent || '')).toUpperCase();
+      for (const cam of status.cams) {
+        if (orig.startsWith(`CAM-${cam.id}`)) {
+          const master = cam.master ? ' · MASTER' : '';
+          t.textContent = `CAM-${cam.id}${master} · SEG ${cam.seg ?? '?'}`;
+          break;
+        }
+      }
+    });
 
     // Recalibration interactive : désactive le bouton en mode headless.
     // Le backend (main.py --headless) ne peut PAS lancer cv2.namedWindow,
