@@ -44,6 +44,77 @@ def _resolve_cam_source(spec: dict) -> Union[str, int]:
         return dev
     return int(spec["index"])
 
+
+class CamHealthCheckError(SystemExit):
+    """Levée si un slot cam n'est pas dans un état exploitable au boot."""
+
+    def __init__(self, msg: str):
+        super().__init__(f"\n[FATAL] {msg}\n")
+
+
+def _health_check_cams() -> None:
+    """Vérifie que chaque slot CAM_SLOTS est utilisable AVANT de tout démarrer.
+
+    Pour chaque slot avec un `device` path :
+      1. path existe sur disque (sinon symlink udev cassé)
+      2. cv2.VideoCapture(path).isOpened() (sinon device inaccessible)
+      3. cap.read() retourne une frame (sinon c'est probablement un Metadata
+         Capture node qu'on a chopé par accident — symlink udev mal targuetté)
+
+    Dernière ligne de défense avant qu'un kiosque ne démarre avec un mapping
+    silencieusement cassé (= scores aberrants sans message d'erreur). Mieux
+    vaut planter clean au boot.
+    """
+    for spec in config.CAM_SLOTS:
+        slot = spec.get("slot", "?")
+        dev = spec.get("device")
+        if not dev:
+            # Mode int-index (--cams CLI) — le init_cameras() classique fera
+            # le check de disponibilité, on ne fait rien ici.
+            continue
+
+        # 1) existence du path
+        if not os.path.exists(dev):
+            raise CamHealthCheckError(
+                f"Slot {slot} : device path {dev} introuvable.\n"
+                f"Vérifie les symlinks udev :\n"
+                f"  ls -l /dev/dart-cam-*\n"
+                f"Si absents, ré-installe les règles :\n"
+                f"  sudo cp webui/udev/99-dart-cams.rules /etc/udev/rules.d/\n"
+                f"  sudo udevadm control --reload\n"
+                f"  sudo udevadm trigger --subsystem-match=video4linux --action=add"
+            )
+
+        # 2) open
+        cap = cv2.VideoCapture(dev)
+        if not cap.isOpened():
+            try: cap.release()
+            except Exception: pass
+            raise CamHealthCheckError(
+                f"Slot {slot} : cv2.VideoCapture({dev}) refuse l'open.\n"
+                f"Device peut être tenu par un autre process. Check :\n"
+                f"  sudo fuser {dev}\n"
+                f"  pgrep -af main.py"
+            )
+
+        # 3) read — distingue Video Capture (renvoie frame) de Metadata
+        #    Capture (open OK, read False).
+        ok, _ = cap.read()
+        cap.release()
+        if not ok:
+            raise CamHealthCheckError(
+                f"Slot {slot} : {dev} s'ouvre mais ne renvoie pas de frame.\n"
+                f"C'est probablement un Metadata Capture node (Device Caps "
+                f"0x04a00000). Le symlink udev pointe au mauvais endroit.\n"
+                f"Régénère les symlinks :\n"
+                f"  sudo udevadm control --reload\n"
+                f"  sudo udevadm trigger --subsystem-match=video4linux --action=change\n"
+                f"  ls -l /dev/dart-cam-*\n"
+                f"  v4l2-ctl -d {dev} --info | grep 'Device Caps' -A2"
+            )
+
+    print(f"[HEALTH] Cam health check OK pour les {len(config.CAM_SLOTS)} slot(s)")
+
 import config
 from calibration import Calibrator, calibrate_all_cameras, save_calibrations, load_calibrations
 from detector import DartDetector
@@ -716,6 +787,10 @@ class DartVision:
     # MAIN LOOP
     # -----------------------------------------------------------------
     def run(self):
+        # Health check tôt : si les symlinks udev sont cassés ou pointent vers
+        # un Metadata Capture, on échoue clean avec un message actionable
+        # plutôt que de démarrer un kiosque silencieusement bancal.
+        _health_check_cams()
         if not self.init_cameras():
             return
         if not self.calibrate():
