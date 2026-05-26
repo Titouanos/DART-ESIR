@@ -326,6 +326,9 @@ class DartVision:
                 "captured_at": self._ref_captured_at,
             },
             "game_state": "end" if self.game.game_over else "live",
+            # Permet au frontend de désactiver les fonctions qui exigent un X server
+            # (recalibration interactive notamment).
+            "headless": bool(self.headless),
         }
 
     # -----------------------------------------------------------------

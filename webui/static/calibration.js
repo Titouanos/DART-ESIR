@@ -54,6 +54,19 @@
     if (residEl && status.calibration) {
       residEl.textContent = (status.calibration.residual_mm || 0).toFixed(2);
     }
+
+    // Recalibration interactive : désactive le bouton en mode headless.
+    // Le backend (main.py --headless) ne peut PAS lancer cv2.namedWindow,
+    // donc on prévient au lieu d'envoyer une commande qui sera refusée.
+    const recalibBtn = $('#recalibBtn');
+    if (recalibBtn) {
+      const isHeadless = !!status.headless;
+      recalibBtn.disabled = isHeadless;
+      recalibBtn.title = isHeadless
+        ? 'Indisponible : main.py tourne en --headless. Relance avec écran HDMI.'
+        : 'Lancer la recalibration interactive (4 points par caméra)';
+      recalibBtn.classList.toggle('is-disabled-headless', isHeadless);
+    }
   }
 
   ws.on('system_status', applySystemStatus);
@@ -94,16 +107,29 @@
     });
   });
 
-  $('#recalibBtn')?.addEventListener('click', () => {
+  $('#recalibBtn')?.addEventListener('click', (e) => {
+    // Garde locale : si le bouton est marqué "headless-disabled", on
+    // refuse côté front avant même d'envoyer une commande qui sera ack'ée
+    // en erreur (évite le toast d'erreur inutile + un round-trip WS).
+    if (e.currentTarget.disabled) return;
     ws.send('start_recalibration');
-    // Reset visuel de la checklist (comportement démo conservé)
-    $$('.checklist__row').forEach(r => {
-      r.classList.remove('is-done');
-      const box = $('.checklist__box', r);
-      box.textContent = '';
-      box.setAttribute('aria-checked', 'false');
-      $('.checklist__status', r).textContent = 'À faire';
-    });
-    updateChecklistCount();
+    // Note : la checklist n'est PAS reset visuellement ici. Si l'ack
+    // revient ok=true, l'effet visuel sera déclenché par le handler
+    // d'ack ci-dessous. Sinon (refus headless), la checklist reste
+    // dans son état précédent — l'utilisateur n'a rien perdu.
+  });
+
+  // Reset visuel de la checklist UNIQUEMENT si le backend a accepté.
+  ws.on('ack', (p) => {
+    if (p && p.cmd === 'start_recalibration' && p.ok) {
+      $$('.checklist__row').forEach(r => {
+        r.classList.remove('is-done');
+        const box = $('.checklist__box', r);
+        box.textContent = '';
+        box.setAttribute('aria-checked', 'false');
+        $('.checklist__status', r).textContent = 'À faire';
+      });
+      updateChecklistCount();
+    }
   });
 })();

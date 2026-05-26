@@ -144,6 +144,20 @@ const ws = new DartWS();
        Côté prod (backend câblé) elle n'a plus de sens — on la masque
        proprement plutôt que de supprimer le HTML qui appartient au design. */
     .devbar { display: none !important; }
+    /* Bouton désactivé indépendamment de la déco WS (ex: recalibration en
+       headless). On signale visuellement avec hachures discrètes pour qu'on
+       comprenne que c'est volontaire, pas un bug. */
+    .btn.is-disabled-headless,
+    .btn[disabled] {
+      opacity: 0.5;
+      cursor: not-allowed;
+      pointer-events: none;
+      background-image: repeating-linear-gradient(
+        135deg,
+        transparent, transparent 6px,
+        rgba(0,0,0,0.08) 6px, rgba(0,0,0,0.08) 8px
+      );
+    }
     /* Toast UI : message éphémère en bas d'écran, non-bloquant. */
     .app-toast {
       position: fixed; left: 50%; bottom: 60px;
