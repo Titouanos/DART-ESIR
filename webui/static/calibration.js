@@ -14,6 +14,23 @@
 (function () {
   const { ws, $, $$, esc } = window.DartApp;
 
+  // Le design du zip applique des `::after` overlay mix-blend-mode:multiply
+  // sur chaque .cam-feed__view (pink/blue/paper) — c'était fait pour le look
+  // fanzine sur les SVG mockés du design. Sur un vrai flux MJPEG (image
+  // naturellement sombre), ça écrase tout en noir. On neutralise via une
+  // class `.is-live` que les overlays CSS savent ignorer.
+  (function injectCalibCSS() {
+    const css = `
+      .cam-feed.is-live .cam-feed__view::after { display: none !important; }
+      .cam-feed.is-live img.cam-feed__svg {
+        width: 100%; height: 100%; display: block; object-fit: cover;
+      }
+    `;
+    const s = document.createElement('style');
+    s.textContent = css;
+    document.head.appendChild(s);
+  })();
+
   // ─── Remplace les SVG mockés par des <img src="/api/cam/.../mjpeg"> ──
   $$('.cam-feed__svg').forEach(svgEl => {
     const slot = svgEl.dataset.feed;        // "A" | "B" | "C"
@@ -21,13 +38,17 @@
     const img = document.createElement('img');
     img.alt = `Flux Cam-${slot}`;
     img.src = `/api/cam/${slot}/mjpeg`;
-    // Reprend la classe pour conserver le styling de la maquette.
-    img.className = 'cam-feed__svg';
-    img.style.width = '100%';
-    img.style.height = '100%';
-    img.style.objectFit = 'cover';
-    img.style.display = 'block';
+    img.className = 'cam-feed__svg';   // garde la classe pour le sizing
     svgEl.parentNode.replaceChild(img, svgEl);
+    // Marque le parent .cam-feed comme "live" → désactive l'overlay riso
+    const feed = svgEl.closest ? svgEl.closest('.cam-feed') : null;
+    if (feed) feed.classList.add('is-live');
+    else {
+      // Fallback : remonte manuellement
+      let p = img.parentElement;
+      while (p && !p.classList.contains('cam-feed')) p = p.parentElement;
+      if (p) p.classList.add('is-live');
+    }
   });
 
   // ─── Hydratation des métadonnées par cam depuis system_status ──────
