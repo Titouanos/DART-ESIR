@@ -8,15 +8,18 @@ import math
 # =============================================================================
 # CAMERAS
 # =============================================================================
-CAM_INDEXES = [0, 3, 4]       # USB webcam indexes (override with --cams)
+CAM_INDEXES = [0, 2, 4]       # USB webcam indexes (override with --cams)
 CAM_WIDTH = 1280
 CAM_HEIGHT = 720
 CAM_FPS = 20
 # Note : les index V4L2 dépendent de l'ordre d'énumération USB au boot du Pi.
-# Si une cam est débranchée puis rebranchée à chaud, le kernel peut lui
-# attribuer un index différent. Confirme avec `v4l2-ctl --list-devices` en
-# cas de doute. Ici cam B est sur usb-xhci-hcd.1-1 → /dev/video3 (après
-# le re-plug du test d'unplug détecté dans STEP 2).
+# Sur cette config :
+#   bus usb-xhci-hcd.0-1 → /dev/video0 (capture) + /dev/video1 (metadata)
+#   bus usb-xhci-hcd.1-1 → /dev/video2 (capture) + /dev/video3 (metadata)
+#   bus usb-xhci-hcd.0-2 → /dev/video4 (capture) + /dev/video5 (metadata)
+# En cas de rebranchement à chaud, le mapping peut être transitoirement
+# différent ; recheck avec `v4l2-ctl --list-devices` si une cam tombe.
+# Solution structurelle : udev rules en STEP 4 (cf. webui/FUTURE.md).
 
 # Camera mounting positions: segment number where each camera sits.
 # Used for confidence zone weighting.
@@ -28,7 +31,7 @@ CAM_POSITIONS = [20, 3, 11]   # Default guess, updated at calibration
 # afficher Cam-A/B/C dans l'interface. Modifiable sans toucher au code.
 CAM_SLOTS = [
     {"slot": "A", "index": 0, "master": False},
-    {"slot": "B", "index": 3, "master": False},
+    {"slot": "B", "index": 2, "master": False},
     {"slot": "C", "index": 4, "master": True},   # le design fanzine désigne C=master
 ]
 
