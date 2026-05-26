@@ -1,0 +1,35 @@
+# =============================================================================
+# DART-ESIR — udev rules pour cams USB stables
+# =============================================================================
+# Crée des symlinks /dev/dart-cam-A, /dev/dart-cam-B, /dev/dart-cam-C qui
+# pointent toujours vers la même cam physique, quel que soit l'ordre
+# d'énumération V4L2 au boot ou après un rebranchement à chaud.
+#
+# Match par port USB physique (KERNELS) plutôt que par sérial :
+# 2 des 3 cams partagent le même ID_SERIAL "Generic_USB_Camera_200901010001"
+# donc on ne peut PAS les distinguer par sérial. Le port USB physique est
+# stable tant qu'on ne déplace pas les câbles.
+#
+# Mapping (à ré-éditer si tu déplaces une cam sur un autre port USB) :
+#   KERNELS=="1-1" → dart-cam-A  (hub xhci-hcd.0 port 1, segment 20)
+#   KERNELS=="3-1" → dart-cam-B  (hub xhci-hcd.1 port 1, segment 3)
+#   KERNELS=="1-2" → dart-cam-C  (hub xhci-hcd.0 port 2, segment 11, master)
+#
+# ATTR{index}=="0" filtre le node CAPTURE (les cams UVC exposent aussi un
+# node metadata à l'index 1 ; sans ce filtre, le symlink basculerait
+# aléatoirement entre les deux et OpenCV échouerait sur le metadata).
+#
+# Installation :
+#   sudo cp webui/udev/99-dart-cams.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload
+#   sudo udevadm trigger
+#   ls -l /dev/dart-cam-*
+#
+# Vérification :
+#   readlink /dev/dart-cam-A    # → ../video0 (ou autre selon l'énumération)
+#   v4l2-ctl -d /dev/dart-cam-A --info    # confirme que c'est bien le capture
+# =============================================================================
+
+SUBSYSTEM=="video4linux", KERNELS=="1-1", ATTR{index}=="0", SYMLINK+="dart-cam-A", TAG+="systemd"
+SUBSYSTEM=="video4linux", KERNELS=="3-1", ATTR{index}=="0", SYMLINK+="dart-cam-B", TAG+="systemd"
+SUBSYSTEM=="video4linux", KERNELS=="1-2", ATTR{index}=="0", SYMLINK+="dart-cam-C", TAG+="systemd"

@@ -21,13 +21,28 @@ Controls:
 """
 
 import argparse
+import os
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 
 import logging
 import cv2
 import numpy as np
+
+
+def _resolve_cam_source(spec: dict) -> Union[str, int]:
+    """Retourne ce qu'on passera à cv2.VideoCapture pour ce slot cam.
+
+    - Si `spec['device']` est défini ET le path existe (symlink udev résolu),
+      on l'utilise — c'est la voie production stable face aux replug USB.
+    - Sinon on retombe sur `spec['index']` (mode dev sans udev, ou path
+      manquant temporairement).
+    """
+    dev = spec.get("device")
+    if dev and os.path.exists(dev):
+        return dev
+    return int(spec["index"])
 
 import config
 from calibration import Calibrator, calibrate_all_cameras, save_calibrations, load_calibrations
@@ -90,25 +105,37 @@ class DartVision:
     # INIT
     # -----------------------------------------------------------------
     def init_cameras(self) -> bool:
-        """Test that cameras exist (open/close one at a time)."""
+        """Test que les cams existent (ouverture/fermeture une à la fois)."""
         print("\n[INIT] Testing cameras...")
         valid_indexes = []
-        for cam_idx in config.CAM_INDEXES:
-            cap = cv2.VideoCapture(cam_idx)
+        valid_slots = []
+        for spec in config.CAM_SLOTS:
+            src = _resolve_cam_source(spec)
+            tag = f"slot {spec['slot']} via {src}"
+            cap = cv2.VideoCapture(src)
             if cap.isOpened():
-                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                print(f"  Camera {cam_idx}: OK ({w}x{h})")
-                valid_indexes.append(cam_idx)
+                # `read()` confirme que ce n'est pas juste un open ouvert mais
+                # bien un capture qui délivre des frames (V4L2 metadata nodes
+                # passent isOpened mais ne renvoient rien).
+                ok, _ = cap.read()
+                if ok:
+                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    print(f"  Camera {tag}: OK ({w}x{h})")
+                    valid_indexes.append(spec["index"])
+                    valid_slots.append(spec)
+                else:
+                    print(f"  Camera {tag}: OPEN mais pas de frame (metadata node?)")
                 cap.release()
             else:
-                print(f"  Camera {cam_idx}: NOT FOUND")
+                print(f"  Camera {tag}: NOT FOUND")
 
         if not valid_indexes:
             print("ERROR: No cameras found.")
             return False
 
         config.CAM_INDEXES = valid_indexes
+        config.CAM_SLOTS = valid_slots
         print(f"  {len(valid_indexes)} camera(s) detected.")
         return True
 
@@ -204,14 +231,21 @@ class DartVision:
         return True
 
     def _open_all_cameras(self):
-        """Open all cameras simultaneously for the main loop."""
+        """Ouvre toutes les cams pour la boucle principale (path udev si dispo).
+
+        On itère sur CAM_SLOTS (donne accès au device path + index + master),
+        et on garde `config.CAM_INDEXES` synchro pour la compat backend
+        (calibration.json est encore keyé par index entier).
+        """
         self.caps = []
         self.detectors = []
         print("\n[INIT] Opening all cameras...")
-        for i, cam_idx in enumerate(config.CAM_INDEXES):
-            cap = cv2.VideoCapture(cam_idx)
+        for i, spec in enumerate(config.CAM_SLOTS):
+            src = _resolve_cam_source(spec)
+            tag = f"slot {spec['slot']} via {src}"
+            cap = cv2.VideoCapture(src)
             if not cap.isOpened():
-                print(f"  WARN: Camera {cam_idx} failed to open")
+                print(f"  WARN: Camera {tag} failed to open")
                 continue
             # MJPEG uses way less USB bandwidth than raw YUYV
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
@@ -222,7 +256,7 @@ class DartVision:
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             self.caps.append(cap)
             self.detectors.append(DartDetector(cam_id=i))
-            print(f"  Camera {cam_idx}: {w}x{h} MJPEG")
+            print(f"  Camera {tag}: {w}x{h} MJPEG")
         self.cam_visible = [True] * len(self.caps)
         print(f"  {len(self.caps)} camera(s) ready.")
 
@@ -810,7 +844,23 @@ def main():
     args = parser.parse_args()
 
     if args.cams:
+        # Override CLI : force le mode int-index sur les N premiers slots
+        # (utile en dev sans udev rules, ou pour pointer sur des indexes
+        # arbitraires). On clear le device pour empêcher la résolution path.
         config.CAM_INDEXES = args.cams
+        for i, idx in enumerate(args.cams):
+            if i < len(config.CAM_SLOTS):
+                config.CAM_SLOTS[i] = {**config.CAM_SLOTS[i],
+                                        "device": None, "index": idx}
+        # Si --cams donne plus d'indexes que de slots configurés, on étend
+        # avec des slots génériques pour rester souple.
+        for i in range(len(config.CAM_SLOTS), len(args.cams)):
+            config.CAM_SLOTS.append({
+                "slot": chr(ord("A") + i),
+                "device": None,
+                "index": args.cams[i],
+                "master": False,
+            })
     if args.cam_positions:
         config.CAM_POSITIONS = args.cam_positions
 

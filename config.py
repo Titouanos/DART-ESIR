@@ -8,31 +8,34 @@ import math
 # =============================================================================
 # CAMERAS
 # =============================================================================
-CAM_INDEXES = [0, 2, 4]       # USB webcam indexes (override with --cams)
+CAM_INDEXES = [0, 2, 4]       # USB webcam indexes (legacy, overridé par --cams)
 CAM_WIDTH = 1280
 CAM_HEIGHT = 720
 CAM_FPS = 20
-# Note : les index V4L2 dépendent de l'ordre d'énumération USB au boot du Pi.
-# Sur cette config :
-#   bus usb-xhci-hcd.0-1 → /dev/video0 (capture) + /dev/video1 (metadata)
-#   bus usb-xhci-hcd.1-1 → /dev/video2 (capture) + /dev/video3 (metadata)
-#   bus usb-xhci-hcd.0-2 → /dev/video4 (capture) + /dev/video5 (metadata)
-# En cas de rebranchement à chaud, le mapping peut être transitoirement
-# différent ; recheck avec `v4l2-ctl --list-devices` si une cam tombe.
-# Solution structurelle : udev rules en STEP 4 (cf. webui/FUTURE.md).
+# CAM_INDEXES sert encore en mode dev (`python main.py --cams 0 2 4`) et
+# comme fallback si les symlinks udev ne sont pas présents (cf. CAM_SLOTS).
+# En production le mapping passe par les paths stables `/dev/dart-cam-*`
+# créés par les udev rules dans webui/udev/99-dart-cams.rules.
 
 # Camera mounting positions: segment number where each camera sits.
 # Used for confidence zone weighting.
 # Set during calibration or via --cam-positions
 CAM_POSITIONS = [20, 3, 11]   # Default guess, updated at calibration
 
-# Mapping slot UI (A/B/C) → index physique. Lu par main.py pour pousser
-# les frames JPEG dans bridge.set_frame(slot, ...), et par webui pour
-# afficher Cam-A/B/C dans l'interface. Modifiable sans toucher au code.
+# Mapping slot UI (A/B/C) → cam physique. Deux clés possibles :
+#   - `device`: chemin V4L2 stable (`/dev/dart-cam-A`...) créé par udev.
+#     C'est la voie de production : robuste face aux replug USB.
+#   - `index`:  index V4L2 entier (legacy). Utilisé en fallback si le device
+#     path n'existe pas (ex: udev rules pas installées en dev local), et
+#     comme clé de stockage dans calibration.json.
+#
+# main.py essaye `device` d'abord, retombe sur `index` si le path est absent.
+# `--cams 0 2 4` en CLI override CAM_INDEXES ET clear le device des slots
+# (force le mode int-index, pour le dev sans udev).
 CAM_SLOTS = [
-    {"slot": "A", "index": 0, "master": False},
-    {"slot": "B", "index": 2, "master": False},
-    {"slot": "C", "index": 4, "master": True},   # le design fanzine désigne C=master
+    {"slot": "A", "device": "/dev/dart-cam-A", "index": 0, "master": False},
+    {"slot": "B", "device": "/dev/dart-cam-B", "index": 2, "master": False},
+    {"slot": "C", "device": "/dev/dart-cam-C", "index": 4, "master": True},
 ]
 
 # =============================================================================
