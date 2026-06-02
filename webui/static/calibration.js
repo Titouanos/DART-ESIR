@@ -98,6 +98,173 @@
     });
   })();
 
+  // ─── Panel tuning live des seuils de détection ──────────────────────
+  // 3 sliders qui pushent un `set_tuning` debouncé sur le WS. Les valeurs
+  // sont initialisées depuis `ws.lastStatus.tuning` au load (ou au prochain
+  // system_status reçu). Utile pour combattre les faux positifs sans restart.
+  (function installTuningPanel() {
+    const calibSide = $('.calib-side');
+    if (!calibSide) return;
+
+    // CSS minimal injecté — les sliders n'existent pas dans la maquette
+    // d'origine. On reste sur les tokens design (paper / ink / pink).
+    const css = `
+      .tuning-panel {
+        position: relative;
+        padding: 14px 16px;
+        background: var(--paper);
+        border: 1.5px solid var(--ink);
+        margin-bottom: 12px;
+        font-family: var(--f-mono);
+      }
+      .tuning-panel__head {
+        display: flex; justify-content: space-between; align-items: baseline;
+        margin-bottom: 10px;
+      }
+      .tuning-row {
+        display: grid;
+        grid-template-columns: 1fr 56px;
+        gap: 12px;
+        align-items: center;
+        margin: 8px 0;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .tuning-row__name { color: var(--ink-soft); }
+      .tuning-row__val {
+        text-align: right;
+        font-family: var(--f-display);
+        font-weight: 800;
+        font-size: 18px;
+        color: var(--ink);
+      }
+      .tuning-row__slider {
+        grid-column: 1 / -1;
+        width: 100%;
+        margin: 2px 0 4px;
+        accent-color: var(--pink);
+      }
+      .tuning-hint {
+        font-size: 10px;
+        color: var(--ink-soft);
+        letter-spacing: 0.12em;
+        margin-top: 8px;
+        line-height: 1.5;
+      }
+    `;
+    const s = document.createElement('style');
+    s.textContent = css;
+    document.head.appendChild(s);
+
+    // Panel HTML
+    const panel = document.createElement('section');
+    panel.className = 'tuning-panel';
+    panel.innerHTML = `
+      <div class="tuning-panel__head">
+        <span class="caption">FIG. 0X — TUNING LIVE</span>
+        <span class="caption caption--plain" id="tuning-state">—</span>
+      </div>
+      <div class="tuning-row">
+        <span class="tuning-row__name" title="Seuil de différence pixel-à-pixel vs référence. Bas = sensible (+faux positifs).">Diff thresh.</span>
+        <span class="tuning-row__val" id="tuning-diff-val">—</span>
+        <input class="tuning-row__slider" type="range" min="10" max="120" step="1"
+               id="tuning-diff" data-key="diff_threshold">
+      </div>
+      <div class="tuning-row">
+        <span class="tuning-row__name" title="Aire minimale en pixels² qu'un contour doit avoir pour être candidat. Monter = filtre les petits artefacts.">Min area</span>
+        <span class="tuning-row__val" id="tuning-area-val">—</span>
+        <input class="tuning-row__slider" type="range" min="40" max="800" step="10"
+               id="tuning-area" data-key="min_dart_area">
+      </div>
+      <div class="tuning-row">
+        <span class="tuning-row__name" title="Nb de frames consécutives stables avant de confirmer une fléchette. Monter = moins de faux positifs, latence +.">Stable frames</span>
+        <span class="tuning-row__val" id="tuning-stable-val">—</span>
+        <input class="tuning-row__slider" type="range" min="3" max="30" step="1"
+               id="tuning-stable" data-key="stable_frames">
+      </div>
+      <div class="tuning-hint">
+        ↑ <strong>faux positifs</strong> = monte diff (45–60), monte area (150–250),<br>
+        monte stable (12–18).  Active 🐛 Debug pour voir l'effet en direct.
+      </div>
+    `;
+    // Insertion juste avant la checklist (en bas du side panel)
+    const checklist = $('.checklist');
+    if (checklist) calibSide.insertBefore(panel, checklist);
+    else calibSide.appendChild(panel);
+
+    const els = {
+      diff:        $('#tuning-diff'),
+      diff_val:    $('#tuning-diff-val'),
+      area:        $('#tuning-area'),
+      area_val:    $('#tuning-area-val'),
+      stable:      $('#tuning-stable'),
+      stable_val:  $('#tuning-stable-val'),
+      state:       $('#tuning-state'),
+    };
+
+    function hydrate(tuning) {
+      if (!tuning) return;
+      if (tuning.diff_threshold != null) {
+        els.diff.value = tuning.diff_threshold;
+        els.diff_val.textContent = tuning.diff_threshold;
+      }
+      if (tuning.min_dart_area != null) {
+        els.area.value = tuning.min_dart_area;
+        els.area_val.textContent = tuning.min_dart_area;
+      }
+      if (tuning.stable_frames != null) {
+        els.stable.value = tuning.stable_frames;
+        els.stable_val.textContent = tuning.stable_frames;
+      }
+    }
+
+    // Debounce : on n'envoie set_tuning qu'à la fin du drag (250ms après
+    // le dernier input event). Évite de saturer le WS pendant le drag.
+    let pending = null;
+    let debounceTimer = null;
+    function scheduleApply(key, value) {
+      pending = pending || {};
+      pending[key] = value;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      els.state.textContent = '…';
+      debounceTimer = setTimeout(() => {
+        const payload = pending;
+        pending = null;
+        debounceTimer = null;
+        ws.send('set_tuning', payload);
+      }, 250);
+    }
+
+    [els.diff, els.area, els.stable].forEach(slider => {
+      slider.addEventListener('input', (e) => {
+        const v = parseInt(e.target.value, 10);
+        const key = e.target.dataset.key;
+        // Update label immédiatement (réactivité visuelle)
+        if (key === 'diff_threshold') els.diff_val.textContent = v;
+        if (key === 'min_dart_area')  els.area_val.textContent = v;
+        if (key === 'stable_frames')  els.stable_val.textContent = v;
+        scheduleApply(key, v);
+      });
+    });
+
+    ws.on('ack', (p) => {
+      if (p && p.cmd === 'set_tuning') {
+        els.state.textContent = p.ok ? '✓ appliqué' : '✗ erreur';
+        setTimeout(() => { els.state.textContent = ''; }, 1500);
+      }
+    });
+
+    // Hydratation : depuis le dernier status connu OU à la prochaine arrivée
+    if (ws.lastStatus && ws.lastStatus.tuning) hydrate(ws.lastStatus.tuning);
+    ws.on('system_status', (status) => {
+      if (status && status.tuning && !debounceTimer) {
+        // Ne pas écraser pendant un drag actif (debounceTimer = drag en cours)
+        hydrate(status.tuning);
+      }
+    });
+  })();
+
   // ─── Hydratation des métadonnées par cam depuis system_status ──────
   function applySystemStatus(status) {
     if (!status || !status.cams) return;

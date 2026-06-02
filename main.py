@@ -434,6 +434,14 @@ class DartVision:
             # Permet au frontend de désactiver les fonctions qui exigent un X server
             # (recalibration interactive notamment).
             "headless": bool(self.headless),
+            # Tuning live des seuils — hydrate les sliders au load + reflète
+            # la valeur courante quand `set_tuning` est envoyé par un client.
+            "tuning": {
+                "diff_threshold": int(config.DIFF_THRESHOLD),
+                "min_dart_area": int(config.MIN_DART_AREA),
+                "stable_frames": int(config.STABLE_FRAMES),
+                "min_elongation": float(config.MIN_ELONGATION),
+            },
         }
 
     # -----------------------------------------------------------------
@@ -932,6 +940,25 @@ class DartVision:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.62, sc, 2)
         cv2.putText(out, f"darts: {detector.dart_count}", (10, 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, config.COLOR_WHITE, 1)
+
+        # Label + score de la dernière détection (résultat APRÈS fusion).
+        # Affiché en gros en bas-gauche pour lire de loin.
+        if self.last_score:
+            label = self.last_score.get("label", "?")
+            pts   = self.last_score.get("score", 0)
+            method = self.last_score.get("fusion_method", "")
+            conf  = self.last_score.get("fusion_confidence", 0) or 0
+            label_col = config.COLOR_GREEN if pts > 0 else config.COLOR_RED
+            y0 = out.shape[0] - 50
+            # Ombre noire pour lisibilité sur fond clair/sombre variable
+            cv2.putText(out, f"{label} = {pts}", (12, y0+2),
+                        cv2.FONT_HERSHEY_DUPLEX, 1.1, (0, 0, 0), 4, cv2.LINE_AA)
+            cv2.putText(out, f"{label} = {pts}", (10, y0),
+                        cv2.FONT_HERSHEY_DUPLEX, 1.1, label_col, 2, cv2.LINE_AA)
+            cv2.putText(out, f"{method} {conf*100:.0f}%",
+                        (10, y0 + 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                        config.COLOR_WHITE, 1, cv2.LINE_AA)
 
         # Cible (cercles concentriques) pour valider la calibration visuellement
         cx, cy, r = config.WARP_CENTER, config.WARP_CENTER, config.WARP_RADIUS

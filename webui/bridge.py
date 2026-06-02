@@ -285,6 +285,28 @@ class Bridge:
                 self._controller.start_recalibration()
                 return {"ok": True}
 
+            if cmd == "set_tuning":
+                # Tuning live des seuils de détection — le detector lit ces
+                # valeurs de `config.X` à chaque frame, donc le changement est
+                # effectif immédiatement, sans restart.
+                import config as _cfg
+                p = payload or {}
+                changed = {}
+                if "diff_threshold" in p:
+                    _cfg.DIFF_THRESHOLD = max(5, min(200, int(p["diff_threshold"])))
+                    changed["diff_threshold"] = _cfg.DIFF_THRESHOLD
+                if "min_dart_area" in p:
+                    _cfg.MIN_DART_AREA = max(20, min(2000, int(p["min_dart_area"])))
+                    changed["min_dart_area"] = _cfg.MIN_DART_AREA
+                if "stable_frames" in p:
+                    _cfg.STABLE_FRAMES = max(2, min(60, int(p["stable_frames"])))
+                    changed["stable_frames"] = _cfg.STABLE_FRAMES
+                if "min_elongation" in p:
+                    _cfg.MIN_ELONGATION = max(1.0, min(5.0, float(p["min_elongation"])))
+                    changed["min_elongation"] = _cfg.MIN_ELONGATION
+                logger.info("set_tuning: %s", changed)
+                return {"ok": True, "applied": changed}
+
             return {"ok": False, "msg": f"Commande inconnue: {cmd!r}"}
 
         except Exception as e:
