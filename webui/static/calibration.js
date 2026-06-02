@@ -35,14 +35,17 @@
   })();
 
   // ─── Remplace les SVG mockés par des <img src="/api/cam/.../mjpeg"> ──
+  const camImgs = [];   // [{slot, img}], pour pouvoir toggler debug ensuite
   $$('.cam-feed__svg').forEach(svgEl => {
     const slot = svgEl.dataset.feed;        // "A" | "B" | "C"
     if (!slot) return;
     const img = document.createElement('img');
     img.alt = `Flux Cam-${slot}`;
+    img.dataset.slot = slot;
     img.src = `/api/cam/${slot}/mjpeg`;
     img.className = 'cam-feed__svg';   // garde la classe pour le sizing
     svgEl.parentNode.replaceChild(img, svgEl);
+    camImgs.push({ slot, img });
     // Marque le parent .cam-feed comme "live" → désactive l'overlay riso
     const feed = svgEl.closest ? svgEl.closest('.cam-feed') : null;
     if (feed) feed.classList.add('is-live');
@@ -53,6 +56,47 @@
       if (p) p.classList.add('is-live');
     }
   });
+
+  // ─── Bouton toggle debug : switch les <img> entre /mjpeg et /debug.mjpeg ──
+  // Le flux debug annote chaque frame avec : état détecteur, contour candidat,
+  // ray (axe fléchette), tip détecté, derniers impacts confirmés, mini masque
+  // de diff. Précieux pour comprendre pourquoi la détection part en cacahuète.
+  function swapStreams(useDebug) {
+    const cacheBust = Date.now();   // évite le cache navigateur sur switch
+    camImgs.forEach(({ slot, img }) => {
+      const url = useDebug
+        ? `/api/cam/${slot}/debug.mjpeg?t=${cacheBust}`
+        : `/api/cam/${slot}/mjpeg?t=${cacheBust}`;
+      img.src = url;
+    });
+  }
+
+  (function installDebugToggle() {
+    // On accroche le bouton dans l'actions bar à côté de "Capturer référence"
+    const actions = $('.actions');
+    if (!actions) return;
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.id = 'debugToggleBtn';
+    btn.type = 'button';
+    btn.innerHTML = '<span class="btn__icon">🐛</span><span>Debug</span>';
+    btn.setAttribute('aria-pressed', 'false');
+    btn.title = 'Affiche les overlays de détection sur les 3 flux (tip, contour, masque diff)';
+    // Insertion après le bouton "Capturer référence" si présent, sinon début.
+    const captureBtn = $('#captureBtn');
+    if (captureBtn && captureBtn.nextSibling) {
+      actions.insertBefore(btn, captureBtn.nextSibling);
+    } else {
+      actions.insertBefore(btn, actions.firstChild);
+    }
+    btn.addEventListener('click', () => {
+      const on = btn.getAttribute('aria-pressed') !== 'true';
+      btn.setAttribute('aria-pressed', String(on));
+      btn.classList.toggle('btn--primary', on);
+      btn.querySelector('span:last-child').textContent = on ? 'Debug ON' : 'Debug';
+      swapStreams(on);
+    });
+  })();
 
   // ─── Hydratation des métadonnées par cam depuis system_status ──────
   function applySystemStatus(status) {

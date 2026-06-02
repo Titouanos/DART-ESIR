@@ -77,15 +77,12 @@ def build_app(bridge: Bridge) -> FastAPI:
     # --- MJPEG par slot caméra ------------------------------------------
     BOUNDARY = b"--dartvision"
 
-    @app.get("/api/cam/{slot}/mjpeg")
-    async def cam_mjpeg(slot: str) -> StreamingResponse:
-        slot = slot.upper()
-
+    def _make_mjpeg_response(slot: str, getter) -> StreamingResponse:
+        """Factory pour les flux MJPEG (clean ou debug)."""
         async def generator():
-            # ~20 fps ; chaque tick on relit le dernier JPEG du bridge.
             placeholder = _placeholder_jpeg(slot)
             while True:
-                frame = bridge.get_frame(slot) or placeholder
+                frame = getter(slot) or placeholder
                 yield (
                     BOUNDARY
                     + b"\r\nContent-Type: image/jpeg\r\nContent-Length: "
@@ -100,6 +97,17 @@ def build_app(bridge: Bridge) -> FastAPI:
             generator(),
             media_type="multipart/x-mixed-replace; boundary=dartvision",
         )
+
+    @app.get("/api/cam/{slot}/mjpeg")
+    async def cam_mjpeg(slot: str) -> StreamingResponse:
+        return _make_mjpeg_response(slot.upper(), bridge.get_frame)
+
+    @app.get("/api/cam/{slot}/debug.mjpeg")
+    async def cam_mjpeg_debug(slot: str) -> StreamingResponse:
+        """Flux annoté (tip détecté, contour, ray, état). Utile pour debug
+        quand la détection paraît imprécise — visualiser ce que le pipeline
+        voit AVANT que la fusion ne donne un résultat."""
+        return _make_mjpeg_response(slot.upper(), bridge.get_frame_debug)
 
     # --- WebSocket -------------------------------------------------------
     @app.websocket("/ws")

@@ -57,6 +57,9 @@ class Bridge:
 
         # Dernières frames JPEG par slot caméra (A/B/C). Servies par /api/cam/*/mjpeg.
         self._frames: Dict[str, bytes] = {}
+        # Variante annotée (tip détecté, contour, ray, masque diff) servie par
+        # /api/cam/*/debug.mjpeg. Utile quand la détection part en cacahuète.
+        self._frames_debug: Dict[str, bytes] = {}
         self._frame_lock = threading.Lock()
 
         # Throttling system_status
@@ -210,6 +213,15 @@ class Bridge:
     def get_frame(self, slot: str) -> Optional[bytes]:
         with self._frame_lock:
             return self._frames.get(slot)
+
+    def set_frame_debug(self, slot: str, jpeg_bytes: bytes) -> None:
+        """Variante annotée (overlay détection) pour debug visuel."""
+        with self._frame_lock:
+            self._frames_debug[slot] = jpeg_bytes
+
+    def get_frame_debug(self, slot: str) -> Optional[bytes]:
+        with self._frame_lock:
+            return self._frames_debug.get(slot)
 
     # =================================================================
     # COMMANDES CLIENT → ACTIONS

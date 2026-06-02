@@ -876,6 +876,12 @@ class DartVision:
     def _push_frames_to_bridge(self, warped_frames):
         """Encode chaque frame warpée en JPEG et la dépose dans le bridge.
 
+        On pousse 2 versions par cam :
+          - frame propre (`set_frame`)             → /api/cam/X/mjpeg
+          - frame annotée debug (`set_frame_debug`) → /api/cam/X/debug.mjpeg
+            (overlay : état detector, contour, ray, candidate tip, derniers
+             impacts confirmés, mini masque diff en coin)
+
         Mappage cam_index → slot via config.CAM_SLOTS. Si l'index physique
         n'a pas de slot, on skip silencieusement.
         """
@@ -893,12 +899,97 @@ class DartVision:
             if slot is None:
                 continue
             try:
+                # 1) Frame propre — pour l'UI normale
                 ok, jpg = cv2.imencode(".jpg", warped,
                                         [int(cv2.IMWRITE_JPEG_QUALITY), 75])
                 if ok:
                     self.bridge.set_frame(slot, jpg.tobytes())
+
+                # 2) Frame annotée — pour le bouton debug
+                det = self.detectors[i] if i < len(self.detectors) else None
+                if det is not None:
+                    annotated = self._annotate_debug(warped, det, slot)
+                    ok_d, jpg_d = cv2.imencode(".jpg", annotated,
+                                                [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                    if ok_d:
+                        self.bridge.set_frame_debug(slot, jpg_d.tobytes())
             except Exception:
                 pass
+
+    def _annotate_debug(self, warped, detector, slot):
+        """Dessine sur une copie de `warped` les overlays de debug détection."""
+        out = warped.copy()
+        # En-tête : slot + état du détecteur + nb darts captés
+        state_colors = {
+            "idle":       config.COLOR_GREEN,
+            "motion":     config.COLOR_YELLOW,
+            "confirming": config.COLOR_ORANGE,
+            "cooldown":   config.COLOR_BLUE,
+            "detected":   config.COLOR_GREEN,
+        }
+        sc = state_colors.get(detector.state, config.COLOR_WHITE)
+        cv2.putText(out, f"CAM {slot} | {detector.state.upper()}", (10, 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.62, sc, 2)
+        cv2.putText(out, f"darts: {detector.dart_count}", (10, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, config.COLOR_WHITE, 1)
+
+        # Cible (cercles concentriques) pour valider la calibration visuellement
+        cx, cy, r = config.WARP_CENTER, config.WARP_CENTER, config.WARP_RADIUS
+        for rr in (r, int(r*0.95), int(r*0.63), int(r*0.59), int(r*0.094), int(r*0.038)):
+            cv2.circle(out, (cx, cy), rr, config.COLOR_CYAN, 1, cv2.LINE_AA)
+        cv2.drawMarker(out, (cx, cy), config.COLOR_CYAN, cv2.MARKER_CROSS, 14, 1)
+
+        # Contour candidat (cyan)
+        if detector.candidate_contour is not None:
+            try:
+                cv2.drawContours(out, [detector.candidate_contour], -1,
+                                 config.COLOR_CYAN, 2)
+            except Exception:
+                pass
+
+        # Ray = axe principal de la fléchette détectée (magenta)
+        if detector.candidate_ray is not None:
+            try:
+                r0 = (int(detector.candidate_ray[0][0]), int(detector.candidate_ray[0][1]))
+                r1 = (int(detector.candidate_ray[1][0]), int(detector.candidate_ray[1][1]))
+                cv2.line(out, r0, r1, config.COLOR_MAGENTA, 1, cv2.LINE_AA)
+            except Exception:
+                pass
+
+        # Tip candidat en cours (jaune, croix) — pendant motion/confirming
+        if detector.candidate_tip and detector.state in ("motion", "confirming"):
+            tp = (int(detector.candidate_tip[0]), int(detector.candidate_tip[1]))
+            cv2.drawMarker(out, tp, config.COLOR_YELLOW,
+                           cv2.MARKER_CROSS, 22, 2)
+
+        # Tous les tips confirmés (cercles verts)
+        for pt in detector.all_detections:
+            cv2.circle(out, (int(pt[0]), int(pt[1])), 4, config.COLOR_GREEN, -1)
+            cv2.circle(out, (int(pt[0]), int(pt[1])), 6, config.COLOR_WHITE, 1)
+
+        # Dernière détection mise en évidence
+        if detector.last_detection:
+            ld = (int(detector.last_detection[0]), int(detector.last_detection[1]))
+            cv2.circle(out, ld, 8, config.COLOR_GREEN, -1)
+            cv2.circle(out, ld, 11, config.COLOR_WHITE, 2)
+
+        # Mini masque de diff en coin haut-droit
+        if detector.debug_mask is not None:
+            try:
+                ms = cv2.resize(detector.debug_mask, (140, 140))
+                mc = cv2.cvtColor(ms, cv2.COLOR_GRAY2BGR)
+                y1, x1 = 6, out.shape[1] - 146
+                if x1 > 0:
+                    out[y1:y1+140, x1:x1+140] = mc
+                    cv2.rectangle(out, (x1-1, y1-1), (x1+140, y1+140),
+                                  config.COLOR_WHITE, 1)
+                    cv2.putText(out, "DIFF", (x1+4, y1+14),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                                config.COLOR_WHITE, 1)
+            except Exception:
+                pass
+
+        return out
 
 
 def main():
