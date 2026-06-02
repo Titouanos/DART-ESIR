@@ -493,14 +493,26 @@
         background: #000;
         border: 1.5px solid var(--ink);
         display: flex; align-items: center; justify-content: center;
-        cursor: crosshair;
         overflow: hidden;
+        min-height: 0;
       }
-      .recalib-canvas img,
-      .recalib-canvas svg {
-        max-width: 100%; max-height: 100%; display: block;
+      /* Wrapper qui prend EXACTEMENT la taille de l'image affichée.
+         display:inline-block force le wrapper à s'adapter au contenu,
+         donc le SVG par-dessus (en position absolute inset:0) est
+         pile aligné sur l'image, sans dérive ni étirement. */
+      .recalib-imgbox {
+        position: relative;
+        display: inline-block;
+        line-height: 0;
+        cursor: crosshair;
       }
-      .recalib-canvas svg {
+      .recalib-imgbox img {
+        display: block;
+        max-width: 100%; max-height: 100%;
+        max-width: calc(100vw - 460px);
+        max-height: calc(100vh - 100px);
+      }
+      .recalib-imgbox svg {
         position: absolute; inset: 0;
         width: 100%; height: 100%;
         pointer-events: none;
@@ -616,8 +628,10 @@
       </div>
       <div class="recalib-body">
         <div class="recalib-canvas" id="recalib-canvas">
-          <img id="recalib-img" alt="Flux RAW">
-          <svg id="recalib-overlay-svg" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+          <div class="recalib-imgbox" id="recalib-imgbox">
+            <img id="recalib-img" alt="Flux RAW">
+            <svg id="recalib-overlay-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+          </div>
         </div>
         <aside class="recalib-side">
           <div>
@@ -645,10 +659,15 @@
     setupRecalibSlot(0);
 
     $('#recalib-close-btn').addEventListener('click', closeRecalibModal);
-    $('#recalib-canvas').addEventListener('click', onCanvasClick);
+    // Click handler sur l'imgbox (pas le canvas) → coords directement
+    // relatives à l'image affichée, sans contamination des marges noires.
+    $('#recalib-imgbox').addEventListener('click', onCanvasClick);
     $('#recalib-restart').addEventListener('click', restartCurrentSlot);
     $('#recalib-confirm').addEventListener('click', confirmCurrentSlot);
     document.addEventListener('keydown', recalibKeyHandler);
+    // Quand l'image native a chargé, on connaît sa taille → on peut
+    // figer le viewBox du SVG dessus.
+    $('#recalib-img').addEventListener('load', redrawOverlay);
   }
 
   function recalibKeyHandler(e) {
@@ -723,18 +742,27 @@
 
   function onCanvasClick(e) {
     if (!recalibState) return;
-    if (recalibState.points.length >= 4) return;     // attend Confirmer/Restart
+    if (recalibState.points.length >= 4) return;
     if (recalibState.busy) return;
 
     const img = $('#recalib-img');
     const rect = img.getBoundingClientRect();
-    // Click coords relatif à l'<img> displayed
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    // Garde-fou : ignore les clics hors-image
-    if (x < 0 || x > rect.width || y < 0 || y > rect.height) return;
+    if (rect.width === 0 || rect.height === 0) return;
+    const nw = img.naturalWidth, nh = img.naturalHeight;
+    if (!nw || !nh) return;
 
-    recalibState.points.push([x, y]);
+    // Coords du clic relatif à l'image AFFICHÉE
+    const dx = e.clientX - rect.left;
+    const dy = e.clientY - rect.top;
+    if (dx < 0 || dx > rect.width || dy < 0 || dy > rect.height) return;
+
+    // Convertit DIRECTEMENT en pixels NATIFS (raw frame). On stocke
+    // toujours en espace natif → cohérent avec le viewBox SVG natif et
+    // avec le backend qui attend ces coords natives.
+    const nx = dx * (nw / rect.width);
+    const ny = dy * (nh / rect.height);
+
+    recalibState.points.push([nx, ny]);
     redrawOverlay();
     updatePointsList();
     updateInstr(recalibState.points.length);
@@ -748,36 +776,48 @@
     const svg = $('#recalib-overlay-svg');
     const img = $('#recalib-img');
     if (!svg || !img) return;
-    const rect = img.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) {
-      svg.innerHTML = '';
-      return;
-    }
-    svg.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
+    // viewBox = taille NATIVE de l'image (naturalWidth/Height).
+    // L'SVG est positionné absolutely sur l'imgbox qui a EXACTEMENT
+    // la taille de l'image affichée (display:inline-block + max-w/h).
+    // Les coordonnées des points sont stockées en pixels NATIFS
+    // (cf. onCanvasClick), donc on peut dessiner directement dans le
+    // viewBox sans rescale, et SVG mappe natif→affiché tout seul.
+    const nw = img.naturalWidth, nh = img.naturalHeight;
+    if (!nw || !nh) return;
+    svg.setAttribute('viewBox', `0 0 ${nw} ${nh}`);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+
+    if (!recalibState) { svg.innerHTML = ''; return; }
     let html = '';
     recalibState.points.forEach((pt, i) => {
       const color = CALIB_POINT_COLORS[i];
+      const r = Math.max(8, nw / 80);   // taille du marker proportionnelle à l'image
+      const stroke = Math.max(1.5, nw / 600);
+      const fontSize = Math.max(12, nw / 50);
       html += `
-        <circle cx="${pt[0]}" cy="${pt[1]}" r="14"
-                fill="none" stroke="${color}" stroke-width="2"/>
-        <circle cx="${pt[0]}" cy="${pt[1]}" r="3" fill="${color}"/>
-        <text x="${pt[0] + 18}" y="${pt[1] + 5}"
-              fill="${color}" font-family="IBM Plex Mono"
-              font-size="13" font-weight="700">${i + 1}</text>
+        <circle cx="${pt[0]}" cy="${pt[1]}" r="${r}"
+                fill="none" stroke="${color}" stroke-width="${stroke * 1.5}"/>
+        <circle cx="${pt[0]}" cy="${pt[1]}" r="${r * 0.3}" fill="${color}"/>
+        <text x="${pt[0] + r + 6}" y="${pt[1] + fontSize * 0.35}"
+              fill="${color}" stroke="rgba(0,0,0,0.4)" stroke-width="0.4"
+              font-family="IBM Plex Mono"
+              font-size="${fontSize}" font-weight="700">${i + 1}</text>
       `;
     });
-    // Trace les lignes entre points consécutifs
     if (recalibState.points.length >= 2) {
+      const dashUnit = Math.max(4, nw / 300);
       for (let i = 0; i < recalibState.points.length - 1; i++) {
         const a = recalibState.points[i], b = recalibState.points[i + 1];
         html += `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"
-                       stroke="#fff" stroke-width="1" stroke-dasharray="4 4"
+                       stroke="#fff" stroke-width="${Math.max(1, nw/800)}"
+                       stroke-dasharray="${dashUnit} ${dashUnit}"
                        opacity="0.5"/>`;
       }
       if (recalibState.points.length === 4) {
         const a = recalibState.points[3], b = recalibState.points[0];
         html += `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"
-                       stroke="#fff" stroke-width="1" stroke-dasharray="4 4"
+                       stroke="#fff" stroke-width="${Math.max(1, nw/800)}"
+                       stroke-dasharray="${dashUnit} ${dashUnit}"
                        opacity="0.5"/>`;
       }
     }
@@ -795,7 +835,10 @@
     setState('CALCUL EN COURS…', '');
     const slot = RECALIB_SLOTS[recalibState.slotIdx];
     const img = $('#recalib-img');
-    const rect = img.getBoundingClientRect();
+    const nw = img.naturalWidth || 1280;
+    const nh = img.naturalHeight || 720;
+    // recalibState.points est DÉJÀ en pixels natifs (cf. onCanvasClick).
+    // On envoie display_w = raw_w pour neutraliser le rescale backend.
     try {
       const res = await fetch('/api/calibration/compute', {
         method: 'POST',
@@ -803,25 +846,33 @@
         body: JSON.stringify({
           slot,
           points: recalibState.points,
-          display_w: rect.width,
-          display_h: rect.height,
-          raw_w: img.naturalWidth || 1280,
-          raw_h: img.naturalHeight || 720,
+          display_w: nw,
+          display_h: nh,
+          raw_w: nw,
+          raw_h: nh,
         }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'erreur serveur' }));
-        throw new Error(err.detail || 'compute failed');
+        let detail = `HTTP ${res.status}`;
+        try {
+          const errJson = await res.json();
+          if (errJson.detail) {
+            detail = typeof errJson.detail === 'string'
+              ? errJson.detail
+              : JSON.stringify(errJson.detail);
+          }
+        } catch { /* body pas json */ }
+        throw new Error(detail);
       }
       const data = await res.json();
       recalibState.lastCompute = data;
-      // Preview
       $('#recalib-preview-img').src = 'data:image/jpeg;base64,' + data.preview_b64;
       $('#recalib-preview-wrap').style.display = 'block';
       $('#recalib-confirm').disabled = false;
       $('#recalib-confirm').classList.add('btn--primary');
       setState(`Segment détecté: ${data.cam_position_segment}. Vérifie la preview avant Confirmer.`, 'ok');
     } catch (e) {
+      console.error('[recalib] compute failed:', e);
       setState(`Erreur compute: ${e.message}`, 'error');
       recalibState.points = [];
       updatePointsList();
