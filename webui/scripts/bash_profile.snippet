@@ -1,0 +1,21 @@
+# =============================================================================
+# DART-ESIR — Snippet à ajouter à ~/.bash_profile (ou .profile)
+# =============================================================================
+# Lance le kiosque automatiquement à l'autologin tty1.
+# Sur les autres terminaux (SSH, autres tty), le launcher détecte XDG_VTNR
+# et ne fait rien (cf. la garde dans dart-kiosk-launch.sh).
+#
+# Installation :
+#   cat /home/rt/DART-ESIR-new/webui/scripts/bash_profile.snippet >> ~/.bash_profile
+# =============================================================================
+
+# Lance les alias debug (dartlogs, dartstatus, etc.)
+if [ -f /home/rt/DART-ESIR-new/webui/scripts/dart-aliases.sh ]; then
+  . /home/rt/DART-ESIR-new/webui/scripts/dart-aliases.sh
+fi
+
+# Lance le kiosque seulement sur tty1 (autologin). La détection XDG_VTNR
+# est dans le script lui-même — on l'appelle inconditionnellement.
+if [ -x /home/rt/DART-ESIR-new/webui/scripts/dart-kiosk-launch.sh ]; then
+  /home/rt/DART-ESIR-new/webui/scripts/dart-kiosk-launch.sh
+fi

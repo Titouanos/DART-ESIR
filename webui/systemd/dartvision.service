@@ -1,0 +1,28 @@
+[Unit]
+Description=DartVision — pipeline OpenCV + serveur web FastAPI (headless)
+Documentation=https://github.com/Titouanos/DART-ESIR
+# Pas de dépendance réseau : on bind sur localhost. La cible default.target
+# garantit qu'on démarre une fois les targets de base (basic.target) up.
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/rt/DART-ESIR-new
+ExecStart=/home/rt/DART-ESIR-new/venv/bin/python -u main.py --mode 501 --names Titouan Kevin --headless
+# Restart si le process meurt sur exception ou si le health check des cams
+# échoue (CamHealthCheckError = SystemExit, donc on_failure attrape).
+Restart=on-failure
+RestartSec=5
+# Garde-fou anti-boucle infinie : si plus de 3 redémarrages en 60s, on lâche
+# et le service reste en "failed". `journalctl --user -u dartvision` permet
+# alors de voir l'erreur sans masquage par les retries.
+StartLimitBurst=3
+StartLimitIntervalSec=60
+# Logs vers journald (journalctl --user -u dartvision)
+StandardOutput=journal
+StandardError=journal
+# Permet à systemd d'avoir un accès propre aux /dev/dart-cam-* via le tag
+# `TAG+="systemd"` posé par notre règle udev.
+
+[Install]
+WantedBy=default.target
