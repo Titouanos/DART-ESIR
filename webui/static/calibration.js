@@ -686,11 +686,26 @@
     recalibState.slotIdx = slotIdx;
     recalibState.points = [];
     recalibState.lastCompute = null;
+    recalibState.busy = true;           // bloque les clics pendant le chargement
+    recalibState.imgReady = false;
     const slot = RECALIB_SLOTS[slotIdx];
-    // Cache-bust pour forcer le navigateur à re-fetch le flux raw
-    const ts = Date.now();
     const img = $('#recalib-img');
-    img.src = `/api/cam/${slot}/raw.mjpeg?t=${ts}`;
+
+    // Forcer un reset complet de l'élément <img>. Sans ça, sur MJPEG le
+    // navigateur garde la dernière frame de la cam précédente et
+    // `naturalWidth` reste à l'ancienne valeur tant que la 1ère frame de
+    // la nouvelle cam n'est pas arrivée → coords du clic se calculent
+    // dans le mauvais espace.
+    try { img.removeAttribute('src'); } catch {}
+    // Force le browser à laisser tomber la frame en mémoire pour qu'on
+    // puisse vérifier naturalWidth==0 (= pas encore chargé)
+    img.src = '';
+    // Petit délai pour laisser le browser flush l'ancienne frame avant
+    // de demander la nouvelle (sinon il peut réutiliser le cache MJPEG).
+    setTimeout(() => {
+      const ts = Date.now();
+      img.src = `/api/cam/${slot}/raw.mjpeg?t=${ts}`;
+    }, 50);
 
     const stepEl = $('#recalib-step');
     if (stepEl) {
@@ -702,8 +717,42 @@
     $('#recalib-confirm').classList.remove('btn--primary');
     $('#recalib-confirm').textContent = '✓ Confirmer & passer';
     $('#recalib-preview-wrap').style.display = 'none';
-    setState('');
-    redrawOverlay();
+    setState(`Chargement du flux Cam-${slot}…`);
+
+    // Vide l'overlay svg (les markers de la cam précédente ne doivent
+    // pas rester pendant la transition)
+    const svg = $('#recalib-overlay-svg');
+    if (svg) svg.innerHTML = '';
+
+    // Polling pour détecter quand la 1ère frame de la nouvelle cam est
+    // dispo. MJPEG ne fire pas toujours `load` de façon fiable selon le
+    // browser, donc on poll naturalWidth jusqu'à ce qu'il devienne > 0.
+    waitForImgReady(slot);
+  }
+
+  function waitForImgReady(slot) {
+    const img = $('#recalib-img');
+    let tries = 0;
+    const MAX_TRIES = 100;            // 100 * 100ms = 10s timeout
+    const timer = setInterval(() => {
+      tries++;
+      if (!recalibState || recalibState.slotIdx == null
+          || RECALIB_SLOTS[recalibState.slotIdx] !== slot) {
+        // L'utilisateur a changé de cam ou fermé le modal pendant l'attente
+        clearInterval(timer);
+        return;
+      }
+      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+        clearInterval(timer);
+        recalibState.imgReady = true;
+        recalibState.busy = false;
+        setState('');
+        redrawOverlay();
+      } else if (tries >= MAX_TRIES) {
+        clearInterval(timer);
+        setState(`Timeout : flux Cam-${slot} n'a pas chargé. Vérifie main.py.`, 'error');
+      }
+    }, 100);
   }
 
   function updateInstr(pointIdx) {
@@ -743,13 +792,26 @@
   function onCanvasClick(e) {
     if (!recalibState) return;
     if (recalibState.points.length >= 4) return;
-    if (recalibState.busy) return;
+    if (recalibState.busy) {
+      // Si l'utilisateur clique pendant le chargement, on lui signale
+      // gentiment plutôt que d'ignorer silencieusement.
+      if (!recalibState.imgReady) {
+        setState('Patiente, flux pas encore prêt…');
+      }
+      return;
+    }
 
     const img = $('#recalib-img');
     const rect = img.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
+    if (rect.width === 0 || rect.height === 0) {
+      setState('Image pas affichée — bug layout, ouvre la console.', 'error');
+      return;
+    }
     const nw = img.naturalWidth, nh = img.naturalHeight;
-    if (!nw || !nh) return;
+    if (!nw || !nh) {
+      setState('Flux pas chargé (naturalWidth=0). Refresh la page.', 'error');
+      return;
+    }
 
     // Coords du clic relatif à l'image AFFICHÉE
     const dx = e.clientX - rect.left;
@@ -912,10 +974,19 @@
       recalibState.busy = false;
       return;
     }
-    // Slot suivant
+    // Slot suivant — désactive Confirmer le temps de la transition pour
+    // éviter qu'un double-click ne déclenche un save dans le mauvais slot.
+    $('#recalib-confirm').disabled = true;
     const next = recalibState.slotIdx + 1;
     if (next < RECALIB_SLOTS.length) {
-      setTimeout(() => setupRecalibSlot(next), 600);
+      // Petit délai pour laisser l'utilisateur voir "Sauvegardé." puis on
+      // bascule. setupRecalibSlot remettra busy=true le temps que la
+      // nouvelle frame charge.
+      setTimeout(() => {
+        try { setupRecalibSlot(next); }
+        catch (e) { console.error('[recalib] setupRecalibSlot crash:', e);
+                    setState(`Crash transition: ${e.message}`, 'error'); }
+      }, 600);
     } else {
       // Terminé
       setState('Recalibration des 3 cams terminée — Pense à recapturer la référence.', 'ok');
