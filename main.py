@@ -371,16 +371,45 @@ class DartVision:
         avec `cv2.namedWindow` + clics souris pour les 4 points. Sans X server
         on crashe sur "qt.qpa.plugin xcb". Refuser ici avec un message clair
         évite que le bouton "Recalibrer" du web fasse tomber tout le pipeline.
+
+        Note : en mode headless, utiliser le flow de recalibration WEB via
+        /api/calibration/compute + /api/calibration/save (cf. webui/server.py).
         """
         if self.headless:
             raise RuntimeError(
-                "Recalibration interactive non disponible en mode --headless. "
-                "Lance main.py sans --headless avec un écran HDMI branché."
+                "Recalibration interactive OpenCV non disponible en mode "
+                "--headless. Utilise le bouton 'Recalibrer' du web qui passe "
+                "par /api/calibration/compute + save (sans Qt)."
             )
         self._recalib_requested = True
 
     def request_shutdown(self) -> None:
         self.running = False
+
+    def reload_calibration(self) -> bool:
+        """Recharge calibration.json + relance le fusion engine.
+
+        Appelé par le bridge après que /api/calibration/save ait écrit un
+        nouveau set de points. Pas besoin de restart main.py : on remplace
+        les Calibrator existants et on régénère le FusionEngine.
+        """
+        loaded = load_calibrations()
+        by_idx = {c.cam_index: c for c in loaded}
+        ordered = [by_idx[i] for i in config.CAM_INDEXES if i in by_idx]
+        if not ordered or len(ordered) != len(config.CAM_INDEXES):
+            print(f"[CALIB] reload échoué : "
+                  f"trouvé {len(ordered)}/{len(config.CAM_INDEXES)} calibrators")
+            return False
+        self.calibrators = ordered
+        self._init_fusion()
+        # Reset les détecteurs (la référence devient invalide après changement
+        # d'homographie). L'utilisateur devra recapturer la référence.
+        for det in self.detectors:
+            det.reset()
+        self._ref_captured_at = None
+        print(f"[CALIB] reload OK ({len(ordered)} calibrators) — "
+              f"recapture la référence !")
+        return True
 
     # -----------------------------------------------------------------
     # SYSTÈME — snapshot pour push_status
@@ -838,6 +867,18 @@ class DartVision:
                     ret, frame = cap.read()
                     if ret:
                         self._last_cam_read[i] = now_ts
+                        # Push frame RAW (pré-warp) au bridge pour la recalibration web.
+                        # Qualité ~70 (suffisant pour clic 4-points, économise CPU).
+                        if i < len(config.CAM_SLOTS):
+                            slot = config.CAM_SLOTS[i].get("slot")
+                            if slot:
+                                try:
+                                    ok_r, jpg_r = cv2.imencode(".jpg", frame,
+                                                                [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                                    if ok_r:
+                                        self.bridge.set_frame_raw(slot, jpg_r.tobytes())
+                                except Exception:
+                                    pass
                     if ret and i < len(self.calibrators):
                         warped_frames.append(self.calibrators[i].warp_frame(frame))
                     else:

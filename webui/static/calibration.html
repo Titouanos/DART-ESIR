@@ -124,53 +124,75 @@
         </section>
 
         <!-- Schéma vue dessus -->
+        <!-- Setup réel : 3 cams sur trépieds AUTOUR de la cible, chacune à
+             34 cm du centre. Cercle serré, pas un triangle large façon match.
+             L'oche est très loin (2.37 m derrière) et n'est pas dans le champ
+             de vision des cams. Échelle : 1 unité SVG ≈ 1 mm.
+             Le board fait 451 mm de diamètre extérieur ; les cams sont sur
+             un cercle de 680 mm de diamètre (= 340 mm radius). -->
         <section class="calib-schema">
           <div class="checklist__head">
-            <span class="caption">FIG. 01 — SCHÉMA · VUE DESSUS · 1:12</span>
+            <span class="caption">FIG. 01 — SETUP RÉEL · VUE DESSUS</span>
+            <span class="caption caption--plain">CAMS À 340 MM DU CENTRE</span>
           </div>
-          <svg class="calib-schema__svg" viewBox="0 0 600 380" xmlns="http://www.w3.org/2000/svg">
-            <!-- Grille -->
+          <svg class="calib-schema__svg" viewBox="-400 -400 800 800" xmlns="http://www.w3.org/2000/svg">
+            <!-- Grille de fond — chaque cellule = 50 mm -->
             <defs>
-              <pattern id="grid-cal" width="20" height="20" patternUnits="userSpaceOnUse">
-                <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#171717" stroke-opacity="0.12" stroke-width="0.5"/>
+              <pattern id="grid-cal" width="50" height="50" patternUnits="userSpaceOnUse">
+                <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#171717" stroke-opacity="0.10" stroke-width="0.6"/>
               </pattern>
             </defs>
-            <rect width="600" height="380" fill="url(#grid-cal)"/>
+            <rect x="-400" y="-400" width="800" height="800" fill="url(#grid-cal)"/>
 
-            <!-- Board (cible) -->
-            <g transform="translate(300, 100)">
-              <circle r="48" fill="#171717"/>
-              <circle r="36" fill="#ff5b9c"/>
-              <circle r="24" fill="#171717"/>
-              <circle r="14" fill="#2e3aa8"/>
-              <circle r="6" fill="#ff5b9c"/>
-              <text y="76" text-anchor="middle" font-family="IBM Plex Mono" font-size="11" fill="#171717" letter-spacing="2">CIBLE · 1.73m</text>
+            <!-- Échelle 100 mm en coin -->
+            <g stroke="#171717" stroke-width="1.5" fill="none">
+              <line x1="-380" y1="370" x2="-280" y2="370"/>
+              <line x1="-380" y1="365" x2="-380" y2="375"/>
+              <line x1="-280" y1="365" x2="-280" y2="375"/>
             </g>
+            <text x="-330" y="385" text-anchor="middle" font-family="IBM Plex Mono" font-size="12" fill="#171717" letter-spacing="1.5">100 MM</text>
 
-            <!-- Caméras -->
-            <g>
-              <!-- CAM-A (seg 11) -->
-              <line x1="130" y1="240" x2="300" y2="110" stroke="#ff5b9c" stroke-width="1" stroke-dasharray="4 4" style="mix-blend-mode: multiply"/>
-              <circle cx="130" cy="240" r="11" fill="#f3ecdb" stroke="#ff5b9c" stroke-width="2"/>
-              <circle cx="130" cy="240" r="4" fill="#ff5b9c"/>
-              <text x="130" y="266" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#171717" letter-spacing="1.5">CAM-A · SEG 11</text>
+            <!-- Cible (board) — diamètre extérieur 451 mm, rayons en mm -->
+            <!-- Hierarchie : double-out (225), double-in (213), triple-out (107), triple-in (99), bull-out (16), bull (6) -->
+            <circle r="225" fill="none" stroke="#171717" stroke-width="2"/>
+            <circle r="213" fill="#ff5b9c" fill-opacity="0.18"/>
+            <circle r="107" fill="none" stroke="#171717" stroke-width="1.5"/>
+            <circle r="99"  fill="#2e3aa8" fill-opacity="0.20"/>
+            <circle r="16"  fill="#2e3aa8" fill-opacity="0.50"/>
+            <circle r="6.5" fill="#ff5b9c"/>
+            <!-- Croix centrale -->
+            <line x1="-12" y1="0" x2="12" y2="0" stroke="#171717" stroke-width="0.6"/>
+            <line x1="0" y1="-12" x2="0" y2="12" stroke="#171717" stroke-width="0.6"/>
+            <text y="252" text-anchor="middle" font-family="IBM Plex Mono" font-size="13" fill="#171717" letter-spacing="2">CIBLE · ⌀ 451 MM</text>
 
-              <!-- CAM-B (seg 18) -->
-              <line x1="470" y1="240" x2="300" y2="110" stroke="#2e3aa8" stroke-width="1" stroke-dasharray="4 4" style="mix-blend-mode: multiply"/>
-              <circle cx="470" cy="240" r="11" fill="#f3ecdb" stroke="#2e3aa8" stroke-width="2"/>
-              <circle cx="470" cy="240" r="4" fill="#2e3aa8"/>
-              <text x="470" y="266" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#171717" letter-spacing="1.5">CAM-B · SEG 18</text>
+            <!-- Cercle pointillé = trajectoire des trépieds à 340 mm du centre -->
+            <circle r="340" fill="none" stroke="#171717" stroke-width="0.8" stroke-dasharray="3 4" stroke-opacity="0.5"/>
+            <text x="0" y="-348" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#171717" fill-opacity="0.6" letter-spacing="1.5">RAYON 340 MM</text>
 
-              <!-- CAM-C (seg 6, MASTER) -->
-              <line x1="300" y1="320" x2="300" y2="110" stroke="#171717" stroke-width="1" stroke-dasharray="4 4"/>
-              <circle cx="300" cy="320" r="11" fill="#171717"/>
-              <circle cx="300" cy="320" r="4" fill="#f3ecdb"/>
-              <text x="300" y="346" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#171717" letter-spacing="1.5">CAM-C · MASTER · SEG 6</text>
+            <!-- 3 cams placées dynamiquement par calibration.js depuis system_status -->
+            <!-- Positions par défaut hardcodées (visibles si JS n'a pas tourné) : -->
+            <!--   A en haut (segment 20 en face) : angle -90° -->
+            <!--   B en bas (segment 3 en face)   : angle +90° -->
+            <!--   C à gauche (segment 11 en face): angle 180° -->
+            <g data-schema-cams>
+              <!-- CAM-A : x=0, y=-340 -->
+              <line data-cam-line="A" x1="0" y1="-340" x2="0" y2="0" stroke="#ff5b9c" stroke-width="1.2" stroke-dasharray="6 4" style="mix-blend-mode: multiply"/>
+              <circle data-cam-dot="A" cx="0" cy="-340" r="14" fill="#f3ecdb" stroke="#ff5b9c" stroke-width="2.5"/>
+              <circle cx="0" cy="-340" r="5" fill="#ff5b9c"/>
+              <text data-cam-label="A" x="0" y="-365" text-anchor="middle" font-family="IBM Plex Mono" font-size="11" fill="#171717" letter-spacing="1.5">CAM-A · SEG 20</text>
+
+              <!-- CAM-B : x=340·cos(150°)=-294, y=340·sin(150°)=+170 → seg 3 en bas-droite -->
+              <line data-cam-line="B" x1="294" y1="170" x2="0" y2="0" stroke="#2e3aa8" stroke-width="1.2" stroke-dasharray="6 4" style="mix-blend-mode: multiply"/>
+              <circle data-cam-dot="B" cx="294" cy="170" r="14" fill="#f3ecdb" stroke="#2e3aa8" stroke-width="2.5"/>
+              <circle cx="294" cy="170" r="5" fill="#2e3aa8"/>
+              <text data-cam-label="B" x="294" y="200" text-anchor="middle" font-family="IBM Plex Mono" font-size="11" fill="#171717" letter-spacing="1.5">CAM-B · SEG 3</text>
+
+              <!-- CAM-C : x=-294, y=+170 → seg 11 en bas-gauche, MASTER -->
+              <line data-cam-line="C" x1="-294" y1="170" x2="0" y2="0" stroke="#171717" stroke-width="1.5" stroke-dasharray="6 4"/>
+              <circle data-cam-dot="C" cx="-294" cy="170" r="14" fill="#171717"/>
+              <circle cx="-294" cy="170" r="5" fill="#f3ecdb"/>
+              <text data-cam-label="C" x="-294" y="200" text-anchor="middle" font-family="IBM Plex Mono" font-size="11" fill="#171717" letter-spacing="1.5">CAM-C · MASTER · SEG 11</text>
             </g>
-
-            <!-- Oche (ligne de tir) -->
-            <line x1="100" y1="362" x2="500" y2="362" stroke="#171717" stroke-width="2"/>
-            <text x="300" y="376" text-anchor="middle" font-family="IBM Plex Mono" font-size="10" fill="#171717" letter-spacing="2">OCHE · DIST. 2.37 M</text>
           </svg>
         </section>
 

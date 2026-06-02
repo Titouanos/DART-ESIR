@@ -18,16 +18,26 @@ WS   /ws                → canal temps réel bidirectionnel
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import math
+import sys
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
+import cv2
+import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+# Le serveur doit pouvoir importer `config` du projet racine
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config  # noqa: E402
 
 from webui.bridge import Bridge
 
@@ -108,6 +118,179 @@ def build_app(bridge: Bridge) -> FastAPI:
         quand la détection paraît imprécise — visualiser ce que le pipeline
         voit AVANT que la fusion ne donne un résultat."""
         return _make_mjpeg_response(slot.upper(), bridge.get_frame_debug)
+
+    @app.get("/api/cam/{slot}/raw.mjpeg")
+    async def cam_mjpeg_raw(slot: str) -> StreamingResponse:
+        """Flux RAW (pré-warp, taille native cam). Utilisé par le flow de
+        recalibration web : l'utilisateur clique sur les 4 wires du board
+        dans l'image native, on calcule l'homographie depuis ces points."""
+        return _make_mjpeg_response(slot.upper(), bridge.get_frame_raw)
+
+    # --- Calibration web (4-points clic per cam) -----------------------
+    # 4 points cibles dans l'image WARPÉE 800×800. L'ordre est canonique :
+    #   [0] 20 top    → (cx, cy − r)
+    #   [1] 6  right  → (cx + r, cy)
+    #   [2] 3  bottom → (cx, cy + r)
+    #   [3] 11 left   → (cx − r, cy)
+    _CALIB_DST_PTS = np.float32([
+        [config.WARP_CENTER, config.WARP_CENTER - config.WARP_RADIUS],
+        [config.WARP_CENTER + config.WARP_RADIUS, config.WARP_CENTER],
+        [config.WARP_CENTER, config.WARP_CENTER + config.WARP_RADIUS],
+        [config.WARP_CENTER - config.WARP_RADIUS, config.WARP_CENTER],
+    ])
+    _FACE_SEGMENTS = [3, 11, 20, 6]
+    _CALIB_FILE = Path(__file__).parent.parent / config.CALIB_FILE
+
+    class CalibComputeRequest(BaseModel):
+        slot: str                   # "A" / "B" / "C"
+        points: List[List[float]]   # 4 × [x, y] dans la coord du raw frame
+        # Taille de l'image affichée côté client (pour rescale les coords si
+        # l'<img> a été redimensionnée par le CSS).
+        display_w: float
+        display_h: float
+        # Taille réelle du raw frame (1280×720 par défaut). Le front peut
+        # la lire via l'attribut naturalWidth de l'<img>.
+        raw_w: int = config.CAM_WIDTH
+        raw_h: int = config.CAM_HEIGHT
+
+    @app.post("/api/calibration/compute")
+    async def calib_compute(req: CalibComputeRequest):
+        """Reçoit 4 points cliqués sur le flux RAW, calcule l'homographie,
+        retourne une preview JPEG (base64) de la frame warpée pour validation
+        utilisateur avant sauvegarde."""
+        if len(req.points) != 4:
+            raise HTTPException(400, "Exactement 4 points requis (20, 6, 3, 11)")
+
+        # Rescale display → raw pixel space
+        sx = req.raw_w / req.display_w if req.display_w > 0 else 1.0
+        sy = req.raw_h / req.display_h if req.display_h > 0 else 1.0
+        src_pts = np.float32([[p[0] * sx, p[1] * sy] for p in req.points])
+
+        H, _ = cv2.findHomography(src_pts, _CALIB_DST_PTS)
+        if H is None:
+            raise HTTPException(500, "Calcul d'homographie échoué — vérifie les 4 points")
+
+        # Auto-détection du segment "face cam" : on prend le plus grand côté
+        # du quad cliqué, qui correspond au segment perpendiculaire à l'axe
+        # optique → côté du board qui est "le plus large" dans l'image.
+        dists = [
+            math.dist(req.points[i], req.points[(i + 1) % 4])
+            for i in range(4)
+        ]
+        face_seg = _FACE_SEGMENTS[dists.index(max(dists))]
+
+        # Génère preview warpé à partir de la frame RAW courante
+        slot = req.slot.upper()
+        raw_jpeg = bridge.get_frame_raw(slot)
+        if not raw_jpeg:
+            raise HTTPException(404, f"Pas de frame RAW disponible pour slot {slot}")
+        arr = np.frombuffer(raw_jpeg, np.uint8)
+        raw_frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if raw_frame is None:
+            raise HTTPException(500, "Frame RAW corrompue")
+        warped = cv2.warpPerspective(raw_frame, H,
+                                      (config.WARP_SIZE, config.WARP_SIZE))
+        # Dessine la cible attendue par-dessus pour vérif visuelle
+        cx, cy, r = config.WARP_CENTER, config.WARP_CENTER, config.WARP_RADIUS
+        cv2.circle(warped, (cx, cy), r,             (0, 255, 255), 2)
+        cv2.circle(warped, (cx, cy), int(r * 0.63), (0, 255, 255), 1)
+        cv2.circle(warped, (cx, cy), int(r * 0.094), (0, 255, 255), 1)
+        cv2.drawMarker(warped, (cx, cy), (0, 255, 255), cv2.MARKER_CROSS, 18, 2)
+        ok, preview_jpg = cv2.imencode(".jpg", warped,
+                                        [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+        if not ok:
+            raise HTTPException(500, "Encodage preview échoué")
+        preview_b64 = base64.b64encode(preview_jpg.tobytes()).decode("ascii")
+
+        return {
+            "ok": True,
+            "homography": H.tolist(),
+            "cam_position_segment": face_seg,
+            "points": req.points,        # echo (utile pour /save)
+            "preview_b64": preview_b64,  # "data:image/jpeg;base64," à préfixer côté front
+        }
+
+    class CalibSaveRequest(BaseModel):
+        slot: str
+        homography: List[List[float]]
+        cam_position_segment: int
+        points: List[List[float]]
+
+    @app.post("/api/calibration/save")
+    async def calib_save(req: CalibSaveRequest):
+        """Sauvegarde le résultat de /compute dans calibration.json + reload
+        à chaud côté main.py (via Controller.reload_calibration)."""
+        # Trouve le cam_index physique correspondant au slot
+        slot = req.slot.upper()
+        spec = next((s for s in config.CAM_SLOTS
+                     if str(s.get("slot", "")).upper() == slot), None)
+        if not spec:
+            raise HTTPException(404, f"Slot {slot} inconnu dans CAM_SLOTS")
+        cam_index = spec["index"]
+
+        # Read existing JSON, remove old entry pour ce cam_index, append nouveau
+        data = []
+        if _CALIB_FILE.exists():
+            try:
+                with open(_CALIB_FILE) as f:
+                    raw = json.load(f)
+                data = raw if isinstance(raw, list) else []
+            except Exception as e:
+                logger.warning("calibration.json corrompu (%s), on repart vierge", e)
+                data = []
+        data = [c for c in data if c.get("cam_index") != cam_index]
+        data.append({
+            "cam_index": cam_index,
+            "points": req.points,
+            "homography": req.homography,
+            "cam_position_segment": req.cam_position_segment,
+        })
+        with open(_CALIB_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+
+        # Reload à chaud côté main.py
+        ctrl = bridge.controller
+        reloaded = False
+        if ctrl is not None and hasattr(ctrl, "reload_calibration"):
+            try:
+                reloaded = bool(ctrl.reload_calibration())
+            except Exception as e:
+                logger.exception("reload_calibration crashed: %s", e)
+
+        return {
+            "ok": True,
+            "slot": slot,
+            "cam_index": cam_index,
+            "saved_entries": len(data),
+            "reloaded": reloaded,
+            "msg": "Pense à recapturer la référence (bouton 📸) après recalibration.",
+        }
+
+    @app.get("/api/calibration/status")
+    async def calib_status():
+        """État courant de calibration.json (utile pour l'UI : quelles cams
+        sont déjà calibrées vs vierges)."""
+        if not _CALIB_FILE.exists():
+            return {"has_file": False, "entries": []}
+        try:
+            with open(_CALIB_FILE) as f:
+                data = json.load(f)
+        except Exception:
+            return {"has_file": True, "entries": [], "error": "corrupted"}
+        # Map cam_index → slot pour l'UI
+        idx_to_slot = {s["index"]: s.get("slot", "?")
+                       for s in config.CAM_SLOTS}
+        return {
+            "has_file": True,
+            "entries": [
+                {
+                    "cam_index": c.get("cam_index"),
+                    "slot": idx_to_slot.get(c.get("cam_index"), "?"),
+                    "segment": c.get("cam_position_segment"),
+                }
+                for c in data
+            ],
+        }
 
     # --- WebSocket -------------------------------------------------------
     @app.websocket("/ws")

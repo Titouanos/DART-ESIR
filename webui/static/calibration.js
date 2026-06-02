@@ -290,33 +290,60 @@
       residEl.textContent = (status.calibration.residual_mm || 0).toFixed(2);
     }
 
-    // Schéma "FIG. 01 — VUE DESSUS" : 3 <text> dans le SVG portent les
-    // labels par cam. Le design les codait en dur (CAM-A · SEG 11, etc.) ;
-    // on les hydrate depuis system_status. Sélection par préfixe du
-    // textContent initial (pas de modif HTML requise).
-    const schemaTexts = $$('.calib-schema__svg text');
-    schemaTexts.forEach(t => {
-      const orig = (t._origText || (t._origText = t.textContent || '')).toUpperCase();
-      for (const cam of status.cams) {
-        if (orig.startsWith(`CAM-${cam.id}`)) {
-          const master = cam.master ? ' · MASTER' : '';
-          t.textContent = `CAM-${cam.id}${master} · SEG ${cam.seg ?? '?'}`;
-          break;
-        }
+    // Schéma "FIG. 01 — SETUP RÉEL" : place dynamiquement les 3 cams sur
+    // le cercle à 340 mm selon le segment qu'elles regardent. Le système
+    // de coords de board.py : angle 0° = segment 20 (top), sens horaire,
+    // 18°/segment. La cam est placée à l'OPPOSÉ du segment qu'elle voit
+    // de face (si elle regarde le 20, elle est en bas du cercle, etc.).
+    const BOARD_ORDER = [20,1,18,4,13,6,10,15,2,17,3,19,7,16,8,11,14,9,12,5];
+    const CAM_RADIUS_MM = 340;
+    function placeCamOnSchema(camId, seg, isMaster) {
+      const segIdx = BOARD_ORDER.indexOf(seg);
+      if (segIdx < 0) return;
+      const segAngleDeg = segIdx * 18;           // 0° = haut (seg 20)
+      const camAngleDeg = (segAngleDeg + 180) % 360;
+      const rad = camAngleDeg * Math.PI / 180;
+      // SVG : y vers le bas → cos = horizontal, sin = vertical inversée
+      const x = Math.sin(rad) * CAM_RADIUS_MM;
+      const y = -Math.cos(rad) * CAM_RADIUS_MM;
+      // Update line cam → centre (l'autre extrémité reste sur 0,0)
+      const line = document.querySelector(`line[data-cam-line="${camId}"]`);
+      if (line) { line.setAttribute('x1', x); line.setAttribute('y1', y); }
+      // Update outer dot
+      const dot = document.querySelector(`circle[data-cam-dot="${camId}"]`);
+      if (dot)  { dot.setAttribute('cx', x); dot.setAttribute('cy', y); }
+      // Update inner dot (le 2e cercle juste après dans le DOM, sans data-attr)
+      if (dot && dot.nextElementSibling
+          && dot.nextElementSibling.tagName.toLowerCase() === 'circle') {
+        dot.nextElementSibling.setAttribute('cx', x);
+        dot.nextElementSibling.setAttribute('cy', y);
       }
+      // Update label (positionné à l'extérieur du cercle pour ne pas chevaucher)
+      const label = document.querySelector(`text[data-cam-label="${camId}"]`);
+      if (label) {
+        const lx = x + Math.sin(rad) * 28;       // décale légèrement vers l'extérieur
+        const ly = y - Math.cos(rad) * 28 + (y > 0 ? 14 : -4);
+        label.setAttribute('x', lx);
+        label.setAttribute('y', ly);
+        const master = isMaster ? ' · MASTER' : '';
+        label.textContent = `CAM-${camId}${master} · SEG ${seg}`;
+      }
+    }
+    status.cams.forEach(cam => {
+      if (cam.seg != null) placeCamOnSchema(cam.id, cam.seg, !!cam.master);
     });
 
-    // Recalibration interactive : désactive le bouton en mode headless.
-    // Le backend (main.py --headless) ne peut PAS lancer cv2.namedWindow,
-    // donc on prévient au lieu d'envoyer une commande qui sera refusée.
+    // Bouton Recalibrer : actif dans les 2 modes. En headless on ouvre
+    // le modal WEB (4 clics par cam) ; en mode dev avec écran on délègue
+    // au flow OpenCV interactif. Le tooltip clarifie ce qui va se passer.
     const recalibBtn = $('#recalibBtn');
     if (recalibBtn) {
       const isHeadless = !!status.headless;
-      recalibBtn.disabled = isHeadless;
+      recalibBtn.disabled = false;
+      recalibBtn.classList.remove('is-disabled-headless');
       recalibBtn.title = isHeadless
-        ? 'Indisponible : main.py tourne en --headless. Relance avec écran HDMI.'
-        : 'Lancer la recalibration interactive (4 points par caméra)';
-      recalibBtn.classList.toggle('is-disabled-headless', isHeadless);
+        ? 'Ouvre le modal web : clique 4 points par caméra (Triple 20, 6, 3, 11)'
+        : 'Lance la recalibration interactive OpenCV (clavier + souris côté Pi)';
     }
   }
 
@@ -359,15 +386,17 @@
   });
 
   $('#recalibBtn')?.addEventListener('click', (e) => {
-    // Garde locale : si le bouton est marqué "headless-disabled", on
-    // refuse côté front avant même d'envoyer une commande qui sera ack'ée
-    // en erreur (évite le toast d'erreur inutile + un round-trip WS).
+    // Bouton "Recalibrer" : 2 modes possibles selon l'env du serveur.
+    //  - headless=true  → on ouvre le modal WEB (flow 4-points par cam)
+    //  - headless=false → on délègue au flow OpenCV interactif (clavier
+    //                     `c` côté Pi avec écran X)
     if (e.currentTarget.disabled) return;
-    ws.send('start_recalibration');
-    // Note : la checklist n'est PAS reset visuellement ici. Si l'ack
-    // revient ok=true, l'effet visuel sera déclenché par le handler
-    // d'ack ci-dessous. Sinon (refus headless), la checklist reste
-    // dans son état précédent — l'utilisateur n'a rien perdu.
+    const headless = !!(ws.lastStatus && ws.lastStatus.headless);
+    if (headless) {
+      openRecalibModal();
+    } else {
+      ws.send('start_recalibration');
+    }
   });
 
   // Reset visuel de la checklist UNIQUEMENT si le backend a accepté.
@@ -383,4 +412,479 @@
       updateChecklistCount();
     }
   });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // MODAL RECALIBRATION WEB — flow 4-points par cam (A → B → C)
+  // ═══════════════════════════════════════════════════════════════════
+  // Étapes par cam :
+  //   1. Affiche le flux RAW (pas warpé) en grand
+  //   2. User clique sur 4 points dans l'ordre canonique :
+  //        Triple 20 (haut) → 6 (droite) → 3 (bas) → 11 (gauche)
+  //      Marqueurs colorés + labels affichés à chaque clic.
+  //   3. À 4 points, POST /api/calibration/compute → preview warpée
+  //   4. User valide ("Confirmer") → POST /api/calibration/save
+  //      Sinon "Recommencer" pour réessayer la cam courante.
+  //   5. Passe à la cam suivante, ou finit.
+
+  const CALIB_POINT_LABELS = [
+    'Triple 20 (HAUT)',
+    'Triple 6 (DROITE)',
+    'Triple 3 (BAS)',
+    'Triple 11 (GAUCHE)',
+  ];
+  const CALIB_POINT_COLORS = [
+    'var(--pink, #ff5b9c)',
+    'var(--blue, #2e3aa8)',
+    'var(--ink, #171717)',
+    'var(--pink, #ff5b9c)',
+  ];
+
+  // Injection CSS du modal (pas de modification du style.css du design)
+  (function injectRecalibCSS() {
+    const css = `
+      .recalib-overlay {
+        position: fixed; inset: 0; z-index: 9000;
+        background: rgba(15, 15, 18, 0.92);
+        display: flex; flex-direction: column;
+        font-family: var(--f-mono);
+      }
+      .recalib-head {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+        gap: 16px;
+        padding: 14px 22px;
+        background: var(--paper);
+        border-bottom: 2px solid var(--ink);
+      }
+      .recalib-head__title {
+        font-family: var(--f-display);
+        font-weight: 900;
+        font-size: 22px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .recalib-head__step {
+        text-align: center;
+        font-size: 12px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+      }
+      .recalib-head__step strong { color: var(--ink); font-weight: 700; }
+      .recalib-close {
+        justify-self: end;
+        background: var(--ink); color: var(--paper);
+        border: none; padding: 8px 16px;
+        font-family: var(--f-mono); font-size: 12px;
+        letter-spacing: 0.18em; text-transform: uppercase;
+        cursor: pointer;
+      }
+      .recalib-close:hover { background: var(--danger, #c8341a); }
+
+      .recalib-body {
+        flex: 1; display: grid;
+        grid-template-columns: 1fr 360px;
+        gap: 18px; padding: 18px;
+        min-height: 0;
+      }
+      .recalib-canvas {
+        position: relative;
+        background: #000;
+        border: 1.5px solid var(--ink);
+        display: flex; align-items: center; justify-content: center;
+        cursor: crosshair;
+        overflow: hidden;
+      }
+      .recalib-canvas img,
+      .recalib-canvas svg {
+        max-width: 100%; max-height: 100%; display: block;
+      }
+      .recalib-canvas svg {
+        position: absolute; inset: 0;
+        width: 100%; height: 100%;
+        pointer-events: none;
+      }
+
+      .recalib-side {
+        background: var(--paper);
+        border: 1.5px solid var(--ink);
+        padding: 18px;
+        display: flex; flex-direction: column; gap: 14px;
+        overflow-y: auto;
+      }
+      .recalib-instructions {
+        font-family: var(--f-display);
+        font-weight: 800;
+        font-size: 24px;
+        text-transform: uppercase;
+        line-height: 1.1;
+      }
+      .recalib-instructions__sub {
+        margin-top: 6px;
+        font-family: var(--f-mono);
+        font-size: 11px;
+        font-weight: 400;
+        letter-spacing: 0.15em;
+        color: var(--ink-soft);
+        text-transform: none;
+      }
+      .recalib-points {
+        display: grid; gap: 8px;
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .recalib-points__row {
+        display: grid; grid-template-columns: 32px 1fr auto;
+        gap: 10px; align-items: center;
+        padding: 8px 10px;
+        background: rgba(0,0,0,0.05);
+        opacity: 0.5;
+      }
+      .recalib-points__row.is-current { opacity: 1; background: var(--ink); color: var(--paper); }
+      .recalib-points__row.is-done    { opacity: 0.85; background: rgba(46,58,168,0.20); }
+      .recalib-points__row .dot {
+        width: 16px; height: 16px; border-radius: 50%;
+        border: 1.5px solid currentColor;
+      }
+      .recalib-actions {
+        display: flex; gap: 10px; flex-wrap: wrap;
+      }
+      .recalib-actions .btn {
+        flex: 1; min-width: 140px;
+        padding: 12px 16px;
+        font-family: var(--f-condensed, sans-serif);
+        font-size: 16px; letter-spacing: 0.08em;
+        text-transform: uppercase;
+        background: var(--paper); color: var(--ink);
+        border: 1.5px solid var(--ink);
+        cursor: pointer;
+      }
+      .recalib-actions .btn--primary { background: var(--ink); color: var(--paper); }
+      .recalib-actions .btn--danger  { background: var(--danger, #c8341a); color: var(--paper); border-color: var(--danger, #c8341a); }
+      .recalib-actions .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+      .recalib-preview {
+        border: 1.5px solid var(--ink);
+        background: #000;
+        padding: 4px;
+        margin-top: 8px;
+      }
+      .recalib-preview img { width: 100%; display: block; }
+
+      .recalib-state {
+        font-size: 11px;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+        text-align: center;
+        min-height: 14px;
+      }
+      .recalib-state.is-error { color: var(--danger, #c8341a); }
+      .recalib-state.is-ok    { color: var(--success, #1e7a3a); }
+
+      @media (max-width: 1100px) {
+        .recalib-body { grid-template-columns: 1fr; }
+        .recalib-side { max-height: 40vh; }
+      }
+    `;
+    const s = document.createElement('style');
+    s.id = 'recalib-css';
+    s.textContent = css;
+    document.head.appendChild(s);
+  })();
+
+  const RECALIB_SLOTS = ['A', 'B', 'C'];   // ordre des cams
+  let recalibState = null;                  // {currentSlotIdx, points, lastCompute, ...}
+
+  function openRecalibModal() {
+    recalibState = {
+      slotIdx: 0,
+      points: [],            // [[x,y], ...] dans coords <img> displayed
+      lastCompute: null,     // résultat /compute pour la cam courante
+      busy: false,
+    };
+    const overlay = document.createElement('div');
+    overlay.className = 'recalib-overlay';
+    overlay.id = 'recalib-overlay';
+    overlay.innerHTML = `
+      <div class="recalib-head">
+        <span class="recalib-head__title">Recalibration</span>
+        <span class="recalib-head__step" id="recalib-step">CAM <strong>A</strong> · 1 SUR 3</span>
+        <button class="recalib-close" id="recalib-close-btn" type="button">Annuler ✕</button>
+      </div>
+      <div class="recalib-body">
+        <div class="recalib-canvas" id="recalib-canvas">
+          <img id="recalib-img" alt="Flux RAW">
+          <svg id="recalib-overlay-svg" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+        </div>
+        <aside class="recalib-side">
+          <div>
+            <div class="recalib-instructions" id="recalib-instr">CLIQUE LE TRIPLE 20</div>
+            <div class="recalib-instructions__sub" id="recalib-instr-sub">
+              C'est le centre du segment 20 sur l'anneau triple, partie haute.
+              Vise le COIN EXTÉRIEUR du double ring (le fil le plus large) au pixel près.
+            </div>
+          </div>
+          <div class="recalib-points" id="recalib-points-list"></div>
+          <div class="recalib-actions">
+            <button class="btn btn--danger" id="recalib-restart" type="button">↺ Recommencer cette cam</button>
+            <button class="btn" id="recalib-confirm" type="button" disabled>✓ Confirmer & passer</button>
+          </div>
+          <div class="recalib-state" id="recalib-state"></div>
+          <div id="recalib-preview-wrap" style="display:none">
+            <div class="recalib-instructions__sub">PREVIEW (board attendu en cyan) :</div>
+            <div class="recalib-preview"><img id="recalib-preview-img" alt="Preview warpée"></div>
+          </div>
+        </aside>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    setupRecalibSlot(0);
+
+    $('#recalib-close-btn').addEventListener('click', closeRecalibModal);
+    $('#recalib-canvas').addEventListener('click', onCanvasClick);
+    $('#recalib-restart').addEventListener('click', restartCurrentSlot);
+    $('#recalib-confirm').addEventListener('click', confirmCurrentSlot);
+    document.addEventListener('keydown', recalibKeyHandler);
+  }
+
+  function recalibKeyHandler(e) {
+    if (!document.getElementById('recalib-overlay')) return;
+    if (e.key === 'Escape') closeRecalibModal();
+  }
+
+  function closeRecalibModal() {
+    const o = document.getElementById('recalib-overlay');
+    if (o) o.remove();
+    document.removeEventListener('keydown', recalibKeyHandler);
+    recalibState = null;
+  }
+
+  function setupRecalibSlot(slotIdx) {
+    recalibState.slotIdx = slotIdx;
+    recalibState.points = [];
+    recalibState.lastCompute = null;
+    const slot = RECALIB_SLOTS[slotIdx];
+    // Cache-bust pour forcer le navigateur à re-fetch le flux raw
+    const ts = Date.now();
+    const img = $('#recalib-img');
+    img.src = `/api/cam/${slot}/raw.mjpeg?t=${ts}`;
+
+    const stepEl = $('#recalib-step');
+    if (stepEl) {
+      stepEl.innerHTML = `CAM <strong>${slot}</strong> · ${slotIdx + 1} SUR ${RECALIB_SLOTS.length}`;
+    }
+    updateInstr(0);
+    updatePointsList();
+    $('#recalib-confirm').disabled = true;
+    $('#recalib-confirm').classList.remove('btn--primary');
+    $('#recalib-confirm').textContent = '✓ Confirmer & passer';
+    $('#recalib-preview-wrap').style.display = 'none';
+    setState('');
+    redrawOverlay();
+  }
+
+  function updateInstr(pointIdx) {
+    const instr = $('#recalib-instr');
+    const sub = $('#recalib-instr-sub');
+    if (pointIdx < 4) {
+      instr.textContent = `CLIQUE ${CALIB_POINT_LABELS[pointIdx]}`;
+      sub.textContent =
+        'Vise le coin EXTÉRIEUR du double-ring (le fil le plus large) — '
+        + 'tu peux zoomer Ctrl+molette si besoin.';
+    } else {
+      instr.textContent = '4 POINTS POSÉS';
+      sub.textContent = 'Vérifie la preview à droite. "Confirmer" sauvegarde + passe à la cam suivante.';
+    }
+  }
+
+  function updatePointsList() {
+    const list = $('#recalib-points-list');
+    if (!list) return;
+    list.innerHTML = CALIB_POINT_LABELS.map((label, i) => {
+      const isDone = i < recalibState.points.length;
+      const isCurrent = i === recalibState.points.length;
+      const cls = ['recalib-points__row'];
+      if (isDone)    cls.push('is-done');
+      if (isCurrent) cls.push('is-current');
+      const color = CALIB_POINT_COLORS[i];
+      return `
+        <div class="${cls.join(' ')}">
+          <span class="dot" style="background:${color}"></span>
+          <span>${label}</span>
+          <span>${isDone ? '✓' : (isCurrent ? '→' : '·')}</span>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function onCanvasClick(e) {
+    if (!recalibState) return;
+    if (recalibState.points.length >= 4) return;     // attend Confirmer/Restart
+    if (recalibState.busy) return;
+
+    const img = $('#recalib-img');
+    const rect = img.getBoundingClientRect();
+    // Click coords relatif à l'<img> displayed
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    // Garde-fou : ignore les clics hors-image
+    if (x < 0 || x > rect.width || y < 0 || y > rect.height) return;
+
+    recalibState.points.push([x, y]);
+    redrawOverlay();
+    updatePointsList();
+    updateInstr(recalibState.points.length);
+
+    if (recalibState.points.length === 4) {
+      computeCurrentSlot();
+    }
+  }
+
+  function redrawOverlay() {
+    const svg = $('#recalib-overlay-svg');
+    const img = $('#recalib-img');
+    if (!svg || !img) return;
+    const rect = img.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      svg.innerHTML = '';
+      return;
+    }
+    svg.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
+    let html = '';
+    recalibState.points.forEach((pt, i) => {
+      const color = CALIB_POINT_COLORS[i];
+      html += `
+        <circle cx="${pt[0]}" cy="${pt[1]}" r="14"
+                fill="none" stroke="${color}" stroke-width="2"/>
+        <circle cx="${pt[0]}" cy="${pt[1]}" r="3" fill="${color}"/>
+        <text x="${pt[0] + 18}" y="${pt[1] + 5}"
+              fill="${color}" font-family="IBM Plex Mono"
+              font-size="13" font-weight="700">${i + 1}</text>
+      `;
+    });
+    // Trace les lignes entre points consécutifs
+    if (recalibState.points.length >= 2) {
+      for (let i = 0; i < recalibState.points.length - 1; i++) {
+        const a = recalibState.points[i], b = recalibState.points[i + 1];
+        html += `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"
+                       stroke="#fff" stroke-width="1" stroke-dasharray="4 4"
+                       opacity="0.5"/>`;
+      }
+      if (recalibState.points.length === 4) {
+        const a = recalibState.points[3], b = recalibState.points[0];
+        html += `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"
+                       stroke="#fff" stroke-width="1" stroke-dasharray="4 4"
+                       opacity="0.5"/>`;
+      }
+    }
+    svg.innerHTML = html;
+  }
+
+  // Re-draw l'overlay sur resize (l'image change de taille)
+  window.addEventListener('resize', () => {
+    if (recalibState) redrawOverlay();
+  });
+
+  async function computeCurrentSlot() {
+    if (!recalibState) return;
+    recalibState.busy = true;
+    setState('CALCUL EN COURS…', '');
+    const slot = RECALIB_SLOTS[recalibState.slotIdx];
+    const img = $('#recalib-img');
+    const rect = img.getBoundingClientRect();
+    try {
+      const res = await fetch('/api/calibration/compute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slot,
+          points: recalibState.points,
+          display_w: rect.width,
+          display_h: rect.height,
+          raw_w: img.naturalWidth || 1280,
+          raw_h: img.naturalHeight || 720,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'erreur serveur' }));
+        throw new Error(err.detail || 'compute failed');
+      }
+      const data = await res.json();
+      recalibState.lastCompute = data;
+      // Preview
+      $('#recalib-preview-img').src = 'data:image/jpeg;base64,' + data.preview_b64;
+      $('#recalib-preview-wrap').style.display = 'block';
+      $('#recalib-confirm').disabled = false;
+      $('#recalib-confirm').classList.add('btn--primary');
+      setState(`Segment détecté: ${data.cam_position_segment}. Vérifie la preview avant Confirmer.`, 'ok');
+    } catch (e) {
+      setState(`Erreur compute: ${e.message}`, 'error');
+      recalibState.points = [];
+      updatePointsList();
+      updateInstr(0);
+      redrawOverlay();
+    } finally {
+      recalibState.busy = false;
+    }
+  }
+
+  function restartCurrentSlot() {
+    if (!recalibState) return;
+    setupRecalibSlot(recalibState.slotIdx);
+  }
+
+  async function confirmCurrentSlot() {
+    if (!recalibState || !recalibState.lastCompute) return;
+    recalibState.busy = true;
+    setState('Sauvegarde…', '');
+    const slot = RECALIB_SLOTS[recalibState.slotIdx];
+    try {
+      const res = await fetch('/api/calibration/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slot,
+          homography: recalibState.lastCompute.homography,
+          cam_position_segment: recalibState.lastCompute.cam_position_segment,
+          points: recalibState.lastCompute.points,
+        }),
+      });
+      if (!res.ok) throw new Error('save failed');
+      const data = await res.json();
+      setState(`Sauvegardé. ${data.reloaded ? '✓ Reloaded' : '⚠ Reload requis'}.`, 'ok');
+    } catch (e) {
+      setState(`Erreur save: ${e.message}`, 'error');
+      recalibState.busy = false;
+      return;
+    }
+    // Slot suivant
+    const next = recalibState.slotIdx + 1;
+    if (next < RECALIB_SLOTS.length) {
+      setTimeout(() => setupRecalibSlot(next), 600);
+    } else {
+      // Terminé
+      setState('Recalibration des 3 cams terminée — Pense à recapturer la référence.', 'ok');
+      setTimeout(() => {
+        closeRecalibModal();
+        // Auto-trigger capture référence après recalib (workflow naturel)
+        if (window.confirm('Recapturer la référence maintenant (board doit être vide) ?')) {
+          ws.send('capture_reference');
+        }
+      }, 1500);
+    }
+  }
+
+  function setState(text, kind) {
+    const el = $('#recalib-state');
+    if (!el) return;
+    el.textContent = text || '';
+    el.className = 'recalib-state'
+      + (kind === 'error' ? ' is-error' : '')
+      + (kind === 'ok' ? ' is-ok' : '');
+  }
+
 })();

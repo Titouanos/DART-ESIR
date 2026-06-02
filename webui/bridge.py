@@ -40,6 +40,7 @@ class Controller(Protocol):
     def capture_reference(self) -> None: ...
     def start_recalibration(self) -> None: ...
     def request_shutdown(self) -> None: ...
+    def reload_calibration(self) -> bool: ...
 
 
 # Throttling minimum entre deux pushes `system_status` quand seules
@@ -60,6 +61,10 @@ class Bridge:
         # Variante annotée (tip détecté, contour, ray, masque diff) servie par
         # /api/cam/*/debug.mjpeg. Utile quand la détection part en cacahuète.
         self._frames_debug: Dict[str, bytes] = {}
+        # Frame RAW (pré-warp, taille native cam) servie par /api/cam/*/raw.mjpeg.
+        # Utile pour le flow de recalibration web : l'utilisateur clique les
+        # 4 points sur l'image RAW, pas l'image warpée.
+        self._frames_raw: Dict[str, bytes] = {}
         self._frame_lock = threading.Lock()
 
         # Throttling system_status
@@ -222,6 +227,19 @@ class Bridge:
     def get_frame_debug(self, slot: str) -> Optional[bytes]:
         with self._frame_lock:
             return self._frames_debug.get(slot)
+
+    def set_frame_raw(self, slot: str, jpeg_bytes: bytes) -> None:
+        """Frame RAW (pré-warp) pour la recalibration web."""
+        with self._frame_lock:
+            self._frames_raw[slot] = jpeg_bytes
+
+    def get_frame_raw(self, slot: str) -> Optional[bytes]:
+        with self._frame_lock:
+            return self._frames_raw.get(slot)
+
+    @property
+    def controller(self) -> Optional[Controller]:
+        return self._controller
 
     # =================================================================
     # COMMANDES CLIENT → ACTIONS
