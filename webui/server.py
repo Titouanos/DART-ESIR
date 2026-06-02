@@ -52,6 +52,28 @@ _PAGES = {
 }
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Pydantic models — DOIVENT être au niveau module (pas dans build_app)
+# sinon FastAPI ne peut pas introspecter la classe pour decider que c'est
+# un body JSON, et il tente de la passer en query param → erreur
+# "field required: req".
+# ─────────────────────────────────────────────────────────────────────
+class CalibComputeRequest(BaseModel):
+    slot: str                   # "A" / "B" / "C"
+    points: List[List[float]]   # 4 × [x, y] dans la coord du raw frame
+    display_w: float
+    display_h: float
+    raw_w: int = config.CAM_WIDTH
+    raw_h: int = config.CAM_HEIGHT
+
+
+class CalibSaveRequest(BaseModel):
+    slot: str
+    homography: List[List[float]]
+    cam_position_segment: int
+    points: List[List[float]]
+
+
 def build_app(bridge: Bridge) -> FastAPI:
     """Construit l'app FastAPI. Le bridge est injecté pour partager l'état avec main.py."""
     app = FastAPI(title="DartVision Web", version="3.0.0")
@@ -141,18 +163,6 @@ def build_app(bridge: Bridge) -> FastAPI:
     _FACE_SEGMENTS = [3, 11, 20, 6]
     _CALIB_FILE = Path(__file__).parent.parent / config.CALIB_FILE
 
-    class CalibComputeRequest(BaseModel):
-        slot: str                   # "A" / "B" / "C"
-        points: List[List[float]]   # 4 × [x, y] dans la coord du raw frame
-        # Taille de l'image affichée côté client (pour rescale les coords si
-        # l'<img> a été redimensionnée par le CSS).
-        display_w: float
-        display_h: float
-        # Taille réelle du raw frame (1280×720 par défaut). Le front peut
-        # la lire via l'attribut naturalWidth de l'<img>.
-        raw_w: int = config.CAM_WIDTH
-        raw_h: int = config.CAM_HEIGHT
-
     @app.post("/api/calibration/compute")
     async def calib_compute(req: CalibComputeRequest):
         """Reçoit 4 points cliqués sur le flux RAW, calcule l'homographie,
@@ -209,12 +219,6 @@ def build_app(bridge: Bridge) -> FastAPI:
             "points": req.points,        # echo (utile pour /save)
             "preview_b64": preview_b64,  # "data:image/jpeg;base64," à préfixer côté front
         }
-
-    class CalibSaveRequest(BaseModel):
-        slot: str
-        homography: List[List[float]]
-        cam_position_segment: int
-        points: List[List[float]]
 
     @app.post("/api/calibration/save")
     async def calib_save(req: CalibSaveRequest):
