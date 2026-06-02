@@ -29,17 +29,27 @@ fusion par zones de confiance, UI fanzine servie en kiosque Chromium.
                           │ FastAPI :8000   │
                           └────────┬────────┘
                                    │
-                          ┌────────┴────────┐
-                          │ cage + Chromium │  ← écran HDMI kiosque
-                          │     --kiosk     │  ← + téléphones LAN (lecture)
-                          └─────────────────┘
+              ┌────────────────────┼────────────────────┐
+              │                    │                    │
+      ┌───────┴───────┐    ┌───────┴───────┐   ┌────────┴────────┐
+      │ Téléphone     │    │ Laptop / TV   │   │ (optionnel)     │
+      │ (LAN)         │    │ (LAN)         │   │ cage+Chromium   │
+      │ navigateur    │    │ navigateur    │   │ sur HDMI du Pi  │
+      └───────────────┘    └───────────────┘   └─────────────────┘
 ```
 
-**Boot flow (Pi)** :
+**Mode par défaut = web-only** : le Pi tourne en **headless** et expose l'UI
+sur `http://<IP-du-Pi>:8000/`. N'importe quel device LAN (téléphone, laptop,
+tablette, TV connectée) peut s'y connecter pour voir et piloter la partie.
+Le système supporte plusieurs clients simultanés (état synchro via WebSocket).
+
+**Mode kiosque local optionnel** (Pi avec écran HDMI + Chromium installé) :
+cf. la section [Mode kiosque HDMI](#mode-kiosque-hdmi-optionnel) plus bas.
+
+**Boot flow (Pi headless web)** :
 1. systemd boot → `loginctl enable-linger rt` → user services up sans login
 2. `dartvision.service` (--user) démarre `main.py --headless` → ouvre les 3 cams via `/dev/dart-cam-*`, lance fastapi sur :8000
-3. `getty@tty1.service` (override autologin) → `agetty --autologin rt` → `login -- rt` → bash login shell → `~/.bash_profile`
-4. `.bash_profile` → `dart-kiosk-launch.sh` → attend que :8000 réponde → exec `cage -- chromium --kiosk http://localhost:8000/`
+3. Le web est dispo dès que le boot finit. Les clients se connectent depuis leurs devices.
 
 ---
 
@@ -76,8 +86,12 @@ Testé sur Pi 5, Raspberry Pi OS Bookworm (kernel 6.12+).
 sudo apt-get update
 sudo apt-get install -y \
   python3-venv python3-pip \
-  cage chromium grim v4l-utils curl
+  v4l-utils curl
 ```
+
+> Note : `cage` et `chromium` ne sont **pas** nécessaires en mode headless
+> web-only. Ne les installe que si tu veux le mode kiosque HDMI (section dédiée
+> plus bas).
 
 ### 2. Clone + venv
 
@@ -127,18 +141,7 @@ systemctl --user status dartvision    # → "active (running)"
 curl http://localhost:8000/           # → HTML setup page
 ```
 
-### 6. Kiosque autologin tty1
-
-```bash
-sudo mkdir -p /etc/systemd/system/getty@tty1.service.d/
-sudo cp webui/systemd/getty-autologin.conf /etc/systemd/system/getty@tty1.service.d/override.conf
-sudo systemctl daemon-reload
-
-# Snippet bash_profile (idempotent — re-exec sans risque)
-grep -q "dart-kiosk-launch.sh" ~/.bash_profile || cat webui/scripts/bash_profile.snippet >> ~/.bash_profile
-```
-
-### 7. Reboot + check
+### 6. Reboot + check
 
 ```bash
 sudo reboot
@@ -146,11 +149,69 @@ sudo reboot
 
 Au boot :
 - `dartvision.service` démarre avec linger (avant tout login)
-- `getty@tty1` autologin rt → `.bash_profile` → `dart-kiosk-launch.sh`
-- Le launcher attend que `:8000` réponde (timeout 90s)
-- `cage -- chromium --kiosk http://localhost:8000/` plein écran HDMI
+- Port 8000 est en LISTEN dans la minute qui suit le boot
+- Tu peux te connecter depuis n'importe quel device LAN
 
-L'UI doit s'afficher en plein écran sans intervention.
+Vérification depuis le Pi :
+
+```bash
+curl -sf http://localhost:8000/ && echo "OK"
+systemctl --user status dartvision    # → "active (running)"
+```
+
+Vérification depuis ton laptop ou téléphone :
+
+```
+http://<IP-du-Pi>:8000/
+```
+
+L'écran de setup doit s'afficher dans le navigateur.
+
+---
+
+## Mode kiosque HDMI (optionnel)
+
+**Skip cette section si ton Pi est headless** (cas par défaut, ce qu'on vient
+d'installer). Le mode web-only est largement suffisant : on accède depuis
+n'importe quel device LAN.
+
+À activer seulement si tu as :
+- Un écran HDMI dédié branché en permanence au Pi
+- Une distribution Pi OS **avec environnement graphique** (Pi OS Desktop,
+  pas Lite — `cage` et `chromium` ont besoin du stack Wayland/DRM côté kernel)
+- Envie d'un démarrage 100 % autonome sans aucun device extérieur
+
+### Installation des paquets
+
+```bash
+sudo apt-get install -y cage chromium
+```
+
+### Activation
+
+```bash
+# Drop-in getty autologin sur tty1
+sudo mkdir -p /etc/systemd/system/getty@tty1.service.d/
+sudo cp webui/systemd/getty-autologin.conf /etc/systemd/system/getty@tty1.service.d/override.conf
+sudo systemctl daemon-reload
+
+# Snippet bash_profile qui lance le kiosque au login auto
+grep -q "dart-kiosk-launch.sh" ~/.bash_profile || cat webui/scripts/bash_profile.snippet >> ~/.bash_profile
+
+sudo reboot
+```
+
+Au boot, en plus de `dartvision.service`, `getty@tty1` auto-logue `rt` →
+sources `.bash_profile` → exec `dart-kiosk-launch.sh` → attend que le
+serveur réponde → `cage -- chromium --kiosk http://localhost:8000/`.
+
+### Désactivation
+
+```bash
+sudo rm /etc/systemd/system/getty@tty1.service.d/override.conf
+sudo systemctl daemon-reload
+# Retirer manuellement la ligne `dart-kiosk-launch.sh` de ~/.bash_profile
+```
 
 ---
 
