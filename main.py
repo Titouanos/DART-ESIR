@@ -407,8 +407,11 @@ class DartVision:
         self._init_fusion()
         # Reset les détecteurs (la référence devient invalide après changement
         # d'homographie). L'utilisateur devra recapturer la référence.
+        # Le bearing appris est aussi invalidé : il est exprimé en coordonnées
+        # warpées, qui viennent de changer — il se réapprendra en 2-3 lancers.
         for det in self.detectors:
             det.reset()
+            det.cam_bearing = None
         self._ref_captured_at = None
         print(f"[CALIB] reload OK ({len(ordered)} calibrators) — "
               f"recapture la référence !")
