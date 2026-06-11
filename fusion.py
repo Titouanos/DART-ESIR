@@ -66,6 +66,11 @@ class FusionEngine:
         self.cam_confidences = cam_confidences
         self.pending: List[Detection] = []
         self.last_fused_time = 0
+        # Points récemment scorés : [(x, y, timestamp)]. Toute nouvelle
+        # détection trop proche est LA MÊME fléchette vue en retard par une
+        # autre cam (références désynchronisées) — on la jette au lieu de
+        # re-scorer. Vu en prod : 1 dart physique → 3 throws en 4 s.
+        self.recent_throws: List[Tuple[float, float, float]] = []
 
     def add_detection(self, cam_id: int, tip: Tuple[int, int],
                       diff_score: float,
@@ -75,6 +80,17 @@ class FusionEngine:
         """
         cx, cy = config.WARP_CENTER, config.WARP_CENTER
         radius = config.WARP_RADIUS
+
+        # Suppression cross-cam : même point qu'un lancer déjà scoré il y a
+        # moins de FUSION_SUPPRESS_S secondes → cam retardataire, on ignore.
+        now = time.time()
+        self.recent_throws = [(x, y, t) for (x, y, t) in self.recent_throws
+                              if now - t < config.FUSION_SUPPRESS_S]
+        for (x, y, t) in self.recent_throws:
+            if math.dist(tip, (x, y)) < config.FUSION_SUPPRESS_DIST:
+                print(f"  [FUSION] cam {cam_id}: détection à {tip} ignorée "
+                      f"(= lancer déjà scoré en ({x:.0f},{y:.0f}))")
+                return None
 
         score_data = compute_score(tip[0], tip[1], cx, cy, radius)
         score_data["cam_id"] = cam_id
@@ -117,6 +133,15 @@ class FusionEngine:
         self.pending = []
         self.last_fused_time = time.time()
 
+        result = self._fuse_inner(detections)
+        if result is not None:
+            # Tips 2D par cam : diagnostic systématique de chaque score
+            result["fusion_tips"] = {d.cam_id: list(d.tip) for d in detections}
+            tx, ty = result["tip_px"]
+            self.recent_throws.append((float(tx), float(ty), time.time()))
+        return result
+
+    def _fuse_inner(self, detections) -> Optional[dict]:
         if len(detections) == 1:
             d = detections[0]
             d.score_data["fusion_confidence"] = d.confidence
@@ -137,13 +162,22 @@ class FusionEngine:
         groups = self._group_by_proximity(detections)
         if len(groups) == 1:
             return self._fuse_group(groups[0], method="agree")
-        else:
-            best_group = max(groups, key=lambda g: sum(d.confidence for d in g))
-            result = self._fuse_group(best_group, method="best_confidence")
-            # Cams en désaccord : la confiance doit le refléter au lieu
-            # d'afficher la simple confiance angulaire de la meilleure cam.
-            result["fusion_confidence"] *= len(best_group) / len(detections)
-            return result
+
+        best_group = max(groups, key=lambda g: sum(d.confidence for d in g))
+        if len(best_group) == 1:
+            # ≥2 cams, AUCUN consensus : ni paire de rays cohérente, ni deux
+            # tips qui s'accordent. Scorer reviendrait à choisir au hasard
+            # parmi des estimations contradictoires → on rejette et on logue.
+            tips = {d.cam_id: d.tip for d in detections}
+            print(f"  [FUSION] REJET: {len(detections)} cams incohérentes, "
+                  f"tips={tips}")
+            return None
+
+        result = self._fuse_group(best_group, method="best_confidence")
+        # Cams en désaccord : la confiance doit le refléter au lieu
+        # d'afficher la simple confiance angulaire de la meilleure cam.
+        result["fusion_confidence"] *= len(best_group) / len(detections)
+        return result
 
     # -----------------------------------------------------------------
     # RAY INTERSECTION

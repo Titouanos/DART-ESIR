@@ -174,6 +174,9 @@ class DartVision:
         # Takeout : non-None quand on attend le retrait des fléchettes
         # (fin de tour). Voir start_takeout() / _process_takeout().
         self._takeout: Optional[dict] = None
+        # Compteur de frames noires consécutives par cam (cam branchée mais
+        # image inutilisable — exposition/USB). Voir boucle run().
+        self._cam_black: list = []
 
     # -----------------------------------------------------------------
     # INIT
@@ -326,6 +329,11 @@ class DartVision:
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAM_WIDTH)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAM_HEIGHT)
             cap.set(cv2.CAP_PROP_FPS, config.CAM_FPS)
+            # Buffer V4L2 minimal : sans ça chaque cam accumule ~4 frames et
+            # read() rend des images PÉRIMÉES, avec un retard différent par
+            # cam → les caméras ne voient pas la même scène au même instant
+            # (désynchro observée : CAM B affichait 2 darts quand A en avait 3)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             self.caps.append(cap)
@@ -444,6 +452,9 @@ class DartVision:
                         cap_ok = (now_ts - self._last_cam_read[pos]) < 1.5
                     else:
                         cap_ok = self.caps[pos].isOpened()
+                    # Cam qui lit mais renvoie du noir = inutilisable
+                    if pos < len(self._cam_black) and self._cam_black[pos] >= 30:
+                        cap_ok = False
                     seg = self.calibrators[pos].cam_position_segment
             except Exception:
                 pass
@@ -549,6 +560,22 @@ class DartVision:
             for det in self.detectors:
                 det.start_new_turn()
             self.capture_reference()   # remet aussi _takeout à None
+
+    def _post_throw_sync(self, warped_frames):
+        """Après un lancer scoré : toutes les cams absorbent la fléchette.
+
+        confirm_detection() remet la référence de CHAQUE cam à la frame
+        courante (fléchette incluse) + petit cooldown. Les cams retardataires
+        ne verront donc plus la fléchette comme un nouveau diff.
+        """
+        for det, warped in zip(self.detectors, warped_frames):
+            if warped is None or det.state == "takeout":
+                continue
+            det.confirm_detection(warped)
+            det.state = "idle"
+            det.stable_count = 0
+            det.cooldown = max(det.cooldown, 10)
+        self.fusion.pending.clear()
 
     def process_frame_cycle(self, warped_frames):
         """Run detection on all cameras, feed into fusion, return result."""
@@ -815,6 +842,15 @@ class DartVision:
         cams = score_data.get('fusion_cams', [])
         conf = score_data.get('fusion_confidence', 0)
 
+        # Diagnostic systématique : tips 2D par cam + résidu géométrique +
+        # état des cams. Indispensable pour auditer chaque score a posteriori.
+        tips = score_data.get('fusion_tips', {})
+        residual = score_data.get('fusion_residual_px')
+        cam_states = [d.state for d in self.detectors]
+        print(f"  [DIAG] fused={score_data.get('tip_px')} tips/cam={tips} "
+              f"residu={residual}px states={cam_states} "
+              f"black={[b >= 30 for b in self._cam_black]}")
+
         print(f"  >> {player}: {t.label} ({t.score} pts)"
               f"  [Cams {cams}, {method}, {conf:.0%}]", end="")
 
@@ -927,11 +963,29 @@ class DartVision:
                 warped_frames = []
                 if len(self._last_cam_read) != len(self.caps):
                     self._last_cam_read = [0.0] * len(self.caps)
+                if len(self._cam_black) != len(self.caps):
+                    self._cam_black = [0] * len(self.caps)
                 now_ts = time.time()
+                # Capture en 2 temps : grab() (dequeue rapide) sur TOUTES les
+                # cams d'abord, puis retrieve() (décodage). Les 3 captures
+                # tombent ainsi à quelques ms d'écart au lieu d'être décalées
+                # par le temps de décodage/warp de chaque cam précédente.
+                grabbed = [cap.grab() for cap in self.caps]
                 for i, cap in enumerate(self.caps):
-                    ret, frame = cap.read()
+                    ret, frame = cap.retrieve() if grabbed[i] else (False, None)
                     if ret:
                         self._last_cam_read[i] = now_ts
+                        # Cam "vivante" mais image noire (exposition/USB HS) :
+                        # aussi inutilisable qu'une cam morte → on le signale.
+                        if frame[::16, ::16].mean() < 5.0:
+                            self._cam_black[i] += 1
+                            if self._cam_black[i] == 30:
+                                print(f"[CAM] ATTENTION: cam {i} renvoie des "
+                                      f"frames NOIRES (objectif/expo/USB ?)")
+                        else:
+                            if self._cam_black[i] >= 30:
+                                print(f"[CAM] cam {i} : signal revenu")
+                            self._cam_black[i] = 0
                         # Push frame RAW (pré-warp) au bridge pour la recalibration web.
                         # Qualité ~70 (suffisant pour clic 4-points, économise CPU).
                         if i < len(config.CAM_SLOTS):
@@ -953,6 +1007,11 @@ class DartVision:
                 fused = self.process_frame_cycle(warped_frames)
                 if fused is not None:
                     self._handle_detection(fused)
+                    # CRUCIAL : resynchronise TOUTES les cams sur ce lancer.
+                    # Sans ça, les cams qui n'ont pas participé à la fusion
+                    # gardent une référence pré-impact et re-scorent la même
+                    # fléchette quelques secondes plus tard en "single".
+                    self._post_throw_sync(warped_frames)
 
                 # Render OpenCV uniquement si on n'est pas headless
                 if not self.headless:
@@ -1051,6 +1110,14 @@ class DartVision:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.62, sc, 2)
         cv2.putText(out, f"darts: {detector.dart_count}", (10, 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, config.COLOR_WHITE, 1)
+
+        # Pourquoi un blob diff n'a pas donné de candidat : compteurs de
+        # rejets de la dernière frame (trop petit / trop grand / ombre)
+        rej = getattr(detector, "last_rejections", None)
+        if rej and any(rej.values()):
+            cv2.putText(out, f"rej p:{rej['small']} g:{rej['big']} o:{rej['shadow']}",
+                        (10, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        config.COLOR_ORANGE, 1)
 
         # Label + score de la dernière détection (résultat APRÈS fusion).
         # Affiché en gros en bas-gauche pour lire de loin.

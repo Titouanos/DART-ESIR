@@ -77,10 +77,18 @@ TIP_REFINE_RADIUS = 12        # Px radius for tip sub-pixel refinement
 # position caméra (CAM_POSITIONS s'est avéré non fiable en prod).
 TIP_WIDTH_RATIO = 1.25        # ratio large/fin mini pour trancher par la largeur
 
-# Rejet des ombres : un contour n'est candidat que si l'intensité moyenne
-# du diff à l'intérieur dépasse ce facteur × DIFF_THRESHOLD. Une ombre
-# passe à peine le seuil ; une fléchette le dépasse largement.
+# Rejet des ombres : un contour n'est candidat que si le 90e percentile du
+# diff à l'intérieur dépasse ce facteur × DIFF_THRESHOLD. Une ombre passe à
+# peine le seuil partout ; une fléchette a un cœur très contrasté. (p90 et
+# non la moyenne : la fermeture morpho inclut des pixels sous le seuil qui
+# diluaient la moyenne et faisaient rejeter de vraies fléchettes.)
 SHADOW_MEAN_DIFF_FACTOR = 1.5
+
+# Auto-guérison de la référence : si le détecteur boucle en "confirming"
+# sans jamais produire de candidat valide (board qui a vibré → anneau de
+# bruit permanent sur le diff), on recapture la référence après N cycles
+# improductifs au lieu de tourner en rond.
+REF_STALE_CYCLES = 4
 
 # Takeout (retrait des fléchettes en fin de tour).
 # Après le 3e dart (ou next_turn forcé), la détection est suspendue jusqu'à
@@ -126,7 +134,12 @@ for _i, _num in enumerate(BOARD_ORDER):
 # - If tips agree (< FUSION_AGREE_DIST px), average them weighted by confidence
 # - If tips disagree, take the one from the highest-confidence camera
 FUSION_AGREE_DIST = 40        # Max px distance to consider "same dart"
-FUSION_WINDOW_MS = 500        # Time window to group detections from different cams
+FUSION_WINDOW_MS = 800        # Time window to group detections from different cams
+# Après un lancer fusionné, toute détection à moins de cette distance du point
+# scoré est ignorée quelques secondes : empêche les cams retardataires de
+# re-scorer LA MÊME fléchette en "single" (vu en prod : 1 dart → 3 throws).
+FUSION_SUPPRESS_DIST = 50
+FUSION_SUPPRESS_S = 3.0
 
 # Validation géométrique de l'intersection des rays. Sans ces gardes, les
 # moindres carrés sortent TOUJOURS un point, même quand les rays sont

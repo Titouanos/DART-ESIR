@@ -28,6 +28,12 @@ class DartDetector:
         self.dart_count = 0
         self.debug_mask = None
         self._last_diff_score = 0
+        # Compteurs de rejets de contours (affichés sur le flux debug pour
+        # comprendre POURQUOI "darts: 0" alors que le diff montre un blob)
+        self.last_rejections = {"small": 0, "big": 0, "shadow": 0}
+        # Cycles de confirmation improductifs consécutifs (diff persistant
+        # mais aucun candidat valide) → auto-recapture de référence
+        self._unproductive_cycles = 0
         # Direction estimée board→caméra (vecteur unitaire), apprise sur les
         # détections dont le profil de largeur est non-ambigu : le flight se
         # projette à l'opposé de la cam, donc flight→pointe pointe vers elle.
@@ -41,6 +47,7 @@ class DartDetector:
         self.state = "idle"
         self.stable_count = 0
         self.cooldown = 0
+        self._unproductive_cycles = 0
 
     def reset(self):
         self.reference = None
@@ -125,9 +132,19 @@ class DartDetector:
         result["mask"] = thresh
 
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        valid = [c for c in contours
-                 if config.MIN_DART_AREA < cv2.contourArea(c) < config.MAX_DART_AREA]
-        valid = [c for c in valid if not self._is_shadow(c, diff)]
+        rej = {"small": 0, "big": 0, "shadow": 0}
+        valid = []
+        for c in contours:
+            a = cv2.contourArea(c)
+            if a <= config.MIN_DART_AREA:
+                rej["small"] += 1
+            elif a >= config.MAX_DART_AREA:
+                rej["big"] += 1
+            elif self._is_shadow(c, diff):
+                rej["shadow"] += 1
+            else:
+                valid.append(c)
+        self.last_rejections = rej
 
         result["contours"] = valid
         total_area = sum(cv2.contourArea(c) for c in valid)
@@ -184,6 +201,19 @@ class DartDetector:
                         result["ray"] = self.candidate_ray
                         result["state"] = "detected"
                         self.reference = gray.copy()
+                        self._unproductive_cycles = 0
+                    else:
+                        # Diff persistant mais rien de scorable : board qui a
+                        # vibré (anneau de bruit), reflet… Après N cycles à
+                        # vide on resynchronise la référence au lieu de
+                        # boucler en motion/confirming indéfiniment.
+                        self._unproductive_cycles += 1
+                        if self._unproductive_cycles >= config.REF_STALE_CYCLES:
+                            print(f"[DETECTOR cam{self.cam_id}] diff persistant "
+                                  f"sans candidat ({self._unproductive_cycles} cycles) "
+                                  f"→ recapture auto de la référence")
+                            self.reference = gray.copy()
+                            self._unproductive_cycles = 0
 
                     self.cooldown = config.COOLDOWN_FRAMES
                     self.stable_count = 0
@@ -210,14 +240,19 @@ class DartDetector:
         return False
 
     def _is_shadow(self, contour, diff):
-        """Un contour d'ombre passe à peine DIFF_THRESHOLD ; une fléchette le
-        dépasse largement. On filtre sur l'intensité moyenne du diff dans le
-        contour (calculée sur la bounding box pour rester cheap)."""
+        """Un contour d'ombre passe à peine DIFF_THRESHOLD partout ; une
+        fléchette a un cœur très contrasté. On compare le 90e percentile du
+        diff dans le contour au seuil (p90 et non la moyenne : la fermeture
+        morpho inclut des pixels sous le seuil qui diluent la moyenne et
+        faisaient rejeter de vraies fléchettes)."""
         x, y, w, h = cv2.boundingRect(contour)
         sub = np.zeros((h, w), dtype=np.uint8)
         cv2.drawContours(sub, [contour - [x, y]], -1, 255, -1)
-        mean_diff = cv2.mean(diff[y:y+h, x:x+w], mask=sub)[0]
-        return mean_diff < config.DIFF_THRESHOLD * config.SHADOW_MEAN_DIFF_FACTOR
+        vals = diff[y:y+h, x:x+w][sub > 0]
+        if len(vals) == 0:
+            return True
+        p90 = float(np.percentile(vals, 90))
+        return p90 < config.DIFF_THRESHOLD * config.SHADOW_MEAN_DIFF_FACTOR
 
     def _anchor_point(self):
         """Point d'ancrage 'côté caméra' pour départager les cas ambigus.
@@ -403,7 +438,20 @@ class DartDetector:
         w_lo = float(np.mean(np.abs(perp[lo]))) if np.any(lo) else 0.0
 
         w_thin, w_wide = min(w_hi, w_lo), max(w_hi, w_lo)
-        if w_wide >= config.TIP_WIDTH_RATIO * max(w_thin, 0.5):
+        r1 = math.dist(end1, (cx, cy))
+        r2 = math.dist(end2, (cx, cy))
+        rim = config.WARP_RADIUS * 1.02
+        if (r1 > rim) != (r2 > rim):
+            # Un seul bout sort du board : c'est le flight/fût qui continue
+            # hors du plan (la pointe d'une fléchette plantée est sur le
+            # board). Signal géométrique fort, prioritaire sur la largeur
+            # (le diff peut tronquer le flight et fausser le profil).
+            tip_f, other = (end2, end1) if r1 > rim else (end1, end2)
+            vx, vy = tip_f[0] - other[0], tip_f[1] - other[1]
+            vn = math.sqrt(vx * vx + vy * vy)
+            if vn > 1e-6:
+                self._update_bearing((vx / vn, vy / vn))
+        elif w_wide >= config.TIP_WIDTH_RATIO * max(w_thin, 0.5):
             # Profil net : la pointe est le bout FIN
             tip_f, other = (end1, end2) if w_hi < w_lo else (end2, end1)
             # Apprend la direction de la caméra : flight→pointe pointe vers elle

@@ -515,10 +515,12 @@
     }
 
     let dbgMode = 'debug';   // "debug" (avec overlays) ou "clean" (flux brut warpé)
+    let watchdogTimer = null;
 
     function toggleOverlay() {
       const existing = document.getElementById('gdbg-overlay');
       if (existing) {
+        if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
         // Couper explicitement les flux MJPEG AVANT de retirer du DOM :
         // sinon le navigateur garde les connexions ouvertes et on sature la
         // limite de 6 connexions/hôte → la réouverture met des plombes.
@@ -578,6 +580,18 @@
           }, 2000);
         });
       });
+
+      // Watchdog : un flux peut ne JAMAIS livrer de frame sans déclencher
+      // 'error' (connexion établie mais affamée → panel noir). Toutes les
+      // 4s, on relance les imgs qui n'ont toujours rien affiché.
+      watchdogTimer = setInterval(() => {
+        $$('#gdbg-grid img[data-gdbg-slot]').forEach(img => {
+          if (img.naturalWidth === 0 && img.src) {
+            const slot = img.dataset.gdbgSlot;
+            img.src = `/api/cam/${slot}/${dbgMode === 'debug' ? 'debug.mjpeg' : 'mjpeg'}?t=${Date.now()}`;
+          }
+        });
+      }, 4000);
 
       document.addEventListener('keydown', escClose);
     }
