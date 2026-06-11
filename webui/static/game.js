@@ -342,7 +342,16 @@
       document.body.classList.remove('state-menu');
     });
     if (actions[1]) actions[1].addEventListener('click', () => {
-      window.location.href = '/calibration';
+      // Recalibrer depuis /game : on ouvre directement le modal partagé
+      // (recalib.js) sans naviguer vers /calibration. Comme ça l'utilisateur
+      // reste dans le contexte de la partie en cours.
+      document.body.classList.remove('state-menu');
+      if (window.DartApp.openRecalibModal) {
+        window.DartApp.openRecalibModal();
+      } else {
+        // Fallback si recalib.js pas chargé pour une raison X
+        window.location.href = '/calibration';
+      }
     });
     if (actions[2]) actions[2].addEventListener('click', () => {
       ws.send('capture_reference');
@@ -406,4 +415,178 @@
   ws.on('_status', ({ connected }) => {
     if (connected && ws.lastSnapshot) renderFromSnapshot(ws.lastSnapshot);
   });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // OVERLAY DEBUG CAMS — voir les 3 flux + détection en temps réel
+  // pendant la partie. Bouton dans la bottom action bar, overlay non
+  // bloquant qu'on peut fermer pour revenir au jeu.
+  // ═══════════════════════════════════════════════════════════════════
+  (function installDebugCamsOverlay() {
+    // CSS injecté (pas de modif HTML de la maquette)
+    const css = `
+      .gdbg-toggle {
+        position: relative;
+        background: var(--paper); color: var(--ink);
+        border: 1.5px solid var(--ink);
+        padding: 0 18px; font-family: var(--f-condensed);
+        font-size: 20px; letter-spacing: 0.06em;
+        text-transform: uppercase; cursor: pointer;
+        margin-right: 10px;
+      }
+      .gdbg-toggle.is-on { background: var(--ink); color: var(--paper); }
+      .gdbg-overlay {
+        position: fixed; inset: 0; z-index: 8000;
+        background: rgba(15, 15, 18, 0.92);
+        display: flex; flex-direction: column;
+        font-family: var(--f-mono);
+      }
+      .gdbg-head {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 12px 22px;
+        background: var(--paper);
+        border-bottom: 2px solid var(--ink);
+      }
+      .gdbg-head__title {
+        font-family: var(--f-display);
+        font-weight: 900; font-size: 22px;
+        text-transform: uppercase; letter-spacing: 0.04em;
+      }
+      .gdbg-controls { display: flex; gap: 10px; align-items: center; }
+      .gdbg-controls button {
+        background: var(--ink); color: var(--paper);
+        border: none; padding: 8px 14px;
+        font-family: var(--f-mono); font-size: 11px;
+        letter-spacing: 0.18em; text-transform: uppercase;
+        cursor: pointer;
+      }
+      .gdbg-controls button.is-active { background: var(--pink); }
+      .gdbg-grid {
+        flex: 1; display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px; padding: 14px;
+        min-height: 0;
+      }
+      .gdbg-feed {
+        display: flex; flex-direction: column;
+        background: #000;
+        border: 1.5px solid var(--ink);
+        min-height: 0;
+      }
+      .gdbg-feed__label {
+        padding: 6px 12px;
+        background: var(--paper); color: var(--ink);
+        font-family: var(--f-mono); font-size: 12px;
+        letter-spacing: 0.18em; text-transform: uppercase;
+        border-bottom: 1.5px solid var(--ink);
+      }
+      .gdbg-feed__img {
+        flex: 1; min-height: 0;
+        display: flex; align-items: center; justify-content: center;
+        overflow: hidden;
+      }
+      .gdbg-feed__img img {
+        max-width: 100%; max-height: 100%;
+        display: block;
+      }
+      @media (max-width: 900px) {
+        .gdbg-grid { grid-template-columns: 1fr; }
+      }
+    `;
+    const style = document.createElement('style');
+    style.textContent = css;
+    document.head.appendChild(style);
+
+    // Ajoute le bouton "Debug" dans la actions bar AVANT le bouton Menu
+    function addToggleButton() {
+      const actions = $('.actions');
+      if (!actions) return;
+      if ($('#gdbgToggleBtn')) return;
+      const btn = document.createElement('button');
+      btn.className = 'btn gdbg-toggle';
+      btn.id = 'gdbgToggleBtn';
+      btn.type = 'button';
+      btn.innerHTML = '<span class="btn__icon">🐛</span><span>Cams</span>';
+      btn.title = 'Affiche les 3 flux caméra avec overlay détection (état, tip, contour, masque diff)';
+      // Insertion juste avant le bouton Menu si possible
+      const menuBtn = $('#menuBtn');
+      if (menuBtn) actions.insertBefore(btn, menuBtn);
+      else actions.appendChild(btn);
+      btn.addEventListener('click', toggleOverlay);
+    }
+
+    let dbgMode = 'debug';   // "debug" (avec overlays) ou "clean" (flux brut warpé)
+
+    function toggleOverlay() {
+      const existing = document.getElementById('gdbg-overlay');
+      if (existing) {
+        existing.remove();
+        $('#gdbgToggleBtn')?.classList.remove('is-on');
+        return;
+      }
+      $('#gdbgToggleBtn')?.classList.add('is-on');
+      buildOverlay();
+    }
+
+    function buildOverlay() {
+      const overlay = document.createElement('div');
+      overlay.className = 'gdbg-overlay';
+      overlay.id = 'gdbg-overlay';
+      const ts = Date.now();
+      overlay.innerHTML = `
+        <div class="gdbg-head">
+          <span class="gdbg-head__title">🐛 Debug cams</span>
+          <div class="gdbg-controls">
+            <button id="gdbg-mode-debug" type="button" class="is-active">Overlays</button>
+            <button id="gdbg-mode-clean" type="button">Brut warpé</button>
+            <button id="gdbg-close" type="button">Fermer ✕</button>
+          </div>
+        </div>
+        <div class="gdbg-grid" id="gdbg-grid">
+          ${['A','B','C'].map(slot => `
+            <div class="gdbg-feed">
+              <div class="gdbg-feed__label">CAM ${slot}</div>
+              <div class="gdbg-feed__img">
+                <img data-gdbg-slot="${slot}"
+                     src="/api/cam/${slot}/${dbgMode === 'debug' ? 'debug.mjpeg' : 'mjpeg'}?t=${ts}"
+                     alt="Cam ${slot}">
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      $('#gdbg-close').addEventListener('click', toggleOverlay);
+      $('#gdbg-mode-debug').addEventListener('click', () => setMode('debug'));
+      $('#gdbg-mode-clean').addEventListener('click', () => setMode('clean'));
+
+      document.addEventListener('keydown', escClose);
+    }
+
+    function escClose(e) {
+      if (e.key === 'Escape' && document.getElementById('gdbg-overlay')) {
+        toggleOverlay();
+        document.removeEventListener('keydown', escClose);
+      }
+    }
+
+    function setMode(mode) {
+      dbgMode = mode;
+      $('#gdbg-mode-debug')?.classList.toggle('is-active', mode === 'debug');
+      $('#gdbg-mode-clean')?.classList.toggle('is-active', mode === 'clean');
+      const ts = Date.now();
+      $$('#gdbg-grid img[data-gdbg-slot]').forEach(img => {
+        const slot = img.dataset.gdbgSlot;
+        img.src = `/api/cam/${slot}/${mode === 'debug' ? 'debug.mjpeg' : 'mjpeg'}?t=${ts}`;
+      });
+    }
+
+    // L'actions bar peut être rendu dynamiquement par game.js après load.
+    // On essaie d'ajouter immédiatement, sinon on attend.
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      addToggleButton();
+    } else {
+      window.addEventListener('load', addToggleButton);
+    }
+  })();
 })();
