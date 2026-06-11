@@ -72,6 +72,16 @@ MIN_ELONGATION = 1.8          # Min length/width ratio to qualify as a dart cont
 CONTOUR_GROUP_DIST = 35       # Max px distance to merge fragmented contours
 TIP_REFINE_RADIUS = 12        # Px radius for tip sub-pixel refinement
 
+# Takeout (retrait des fléchettes en fin de tour).
+# Après le 3e dart (ou next_turn forcé), la détection est suspendue jusqu'à
+# ce que le retrait soit observé (activité puis stabilité), puis la référence
+# est recapturée — les trous laissés par les pointes sont ainsi absorbés
+# dans la nouvelle référence au lieu de générer de fausses détections.
+TAKEOUT_ACTIVITY_MOTION = 1500   # px de motion inter-frame = main dans le champ
+TAKEOUT_STABLE_FRAMES = 15       # cycles stables consécutifs avant recapture
+TAKEOUT_MIN_DIFF_AREA = 160      # aire de diff vs ref attestant darts retirées
+TAKEOUT_TIMEOUT_S = 15.0         # filet de sécurité : recapture forcée
+
 # =============================================================================
 # CONFIDENCE ZONES
 # =============================================================================

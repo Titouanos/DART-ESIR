@@ -519,6 +519,10 @@
     function toggleOverlay() {
       const existing = document.getElementById('gdbg-overlay');
       if (existing) {
+        // Couper explicitement les flux MJPEG AVANT de retirer du DOM :
+        // sinon le navigateur garde les connexions ouvertes et on sature la
+        // limite de 6 connexions/hôte → la réouverture met des plombes.
+        existing.querySelectorAll('img').forEach(img => { img.src = ''; });
         existing.remove();
         $('#gdbgToggleBtn')?.classList.remove('is-on');
         return;

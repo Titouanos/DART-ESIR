@@ -41,6 +41,7 @@ class Controller(Protocol):
     def start_recalibration(self) -> None: ...
     def request_shutdown(self) -> None: ...
     def reload_calibration(self) -> bool: ...
+    def start_takeout(self) -> None: ...
 
 
 # Throttling minimum entre deux pushes `system_status` quand seules
@@ -279,6 +280,10 @@ class Bridge:
 
             if cmd == "next_turn":
                 self._game.force_next_turn()
+                # Des fléchettes sont probablement encore plantées : on passe
+                # en takeout pour que leur retrait ne génère pas de faux scores.
+                if self._controller is not None:
+                    self._controller.start_takeout()
                 return {"ok": True}
 
             if cmd == "reset_game":

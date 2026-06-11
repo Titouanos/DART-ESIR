@@ -51,6 +51,32 @@ class DartDetector:
         self.dart_count = 0
         self._last_diff_score = 0
 
+    def enter_takeout(self):
+        """Suspend la détection le temps que le joueur retire ses fléchettes.
+
+        En takeout, process_frame continue de mesurer motion/diff (exposés
+        dans le result pour que le contrôleur décide quand recapturer la
+        référence) mais ne déclenche plus aucune détection — sinon les
+        silhouettes des darts retirées et les trous laissés par les pointes
+        passent pour de nouvelles fléchettes.
+        """
+        self.state = "takeout"
+        self.stable_count = 0
+        self.cooldown = 0
+        self.candidate_tip = None
+        self.candidate_ray = None
+        self.candidate_contour = None
+
+    def start_new_turn(self):
+        """Oublie les détections du tour précédent (anti-doublon par tour).
+
+        Sans ça, _is_duplicate finit par interdire tout impact à moins de
+        DUPLICATE_MIN_DIST px d'une fléchette d'un tour passé.
+        """
+        self.all_detections = []
+        self.dart_count = 0
+        self.last_detection = None
+
     def process_frame(self, frame) -> dict:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         # Apply CLAHE to boost contrast of the darts against dark/light segments
@@ -61,6 +87,7 @@ class DartDetector:
         result = {
             "state": self.state, "tip": None, "ray": None,
             "mask": None, "diff_score": 0.0, "contours": [],
+            "motion": 0,
         }
 
         if self.reference is None:
@@ -108,8 +135,15 @@ class DartDetector:
             _, ft = cv2.threshold(fd, 20, 255, cv2.THRESH_BINARY)
             motion = cv2.countNonZero(cv2.bitwise_and(ft, board_mask))
         self.prev_gray = gray.copy()
+        result["motion"] = motion
 
         # State machine
+        if self.state == "takeout":
+            # Détection suspendue : le contrôleur observe motion/diff_score
+            # et recapturera la référence quand le retrait est terminé.
+            result["state"] = "takeout"
+            return result
+
         if self.state == "idle":
             if total_area > config.MIN_DART_AREA and valid:
                 self.state = "motion"
@@ -168,6 +202,24 @@ class DartDetector:
             if d < min_dist:
                 return True
         return False
+
+    def _cam_anchor(self):
+        """Position approximative de la caméra projetée sur le plan warpé.
+
+        Le corps et le flight d'une fléchette sont au-dessus du plan du board ;
+        l'homographie les projette À L'OPPOSÉ de la caméra. La pointe est donc
+        l'extrémité du contour la plus PROCHE de la caméra — pas du centre du
+        board (heuristique précédente, fausse pour toute fléchette plantée
+        entre le centre et la caméra : on prenait le flight).
+        """
+        try:
+            seg = config.CAM_POSITIONS[self.cam_id]
+            ang = math.radians(config.SEGMENT_ANGLES[seg])
+        except (IndexError, KeyError, TypeError):
+            return (float(config.WARP_CENTER), float(config.WARP_CENTER))
+        r = config.WARP_RADIUS * 1.5
+        return (config.WARP_CENTER + r * math.sin(ang),
+                config.WARP_CENTER - r * math.cos(ang))
 
     def _find_dart_tip(self, contours):
         """
@@ -313,9 +365,11 @@ class DartDetector:
         end1 = (mean[0] + dir_x * max_proj, mean[1] + dir_y * max_proj)
         end2 = (mean[0] + dir_x * min_proj, mean[1] + dir_y * min_proj)
 
-        # Tip = the extreme closest to board center
-        d1 = math.sqrt((end1[0] - cx)**2 + (end1[1] - cy)**2)
-        d2 = math.sqrt((end2[0] - cx)**2 + (end2[1] - cy)**2)
+        # Tip = the extreme closest to the CAMERA (the flight projects away
+        # from the camera onto the board plane, see _cam_anchor)
+        ax, ay = self._cam_anchor()
+        d1 = math.sqrt((end1[0] - ax)**2 + (end1[1] - ay)**2)
+        d2 = math.sqrt((end2[0] - ax)**2 + (end2[1] - ay)**2)
         tip = (int(end1[0]), int(end1[1])) if d1 < d2 else (int(end2[0]), int(end2[1]))
 
         # Ray: anchor at the tip (instead of centroid) to avoid flight bias,
@@ -332,7 +386,8 @@ class DartDetector:
 
     def _tip_from_closest_contour_point(self, contour, cx, cy):
         """
-        For round/small contours: tip = closest contour point to center.
+        For round/small contours: tip = contour point closest to the camera
+        (same projection argument as _cam_anchor).
         Ray = centroid → board center direction.
         Returns (tip, ray, score, elongation=1.0).
         """
@@ -340,8 +395,9 @@ class DartDetector:
         if len(pts) == 0:
             return None, None, 0, 0
 
-        dx = pts[:, 0].astype(float) - cx
-        dy = pts[:, 1].astype(float) - cy
+        ax, ay = self._cam_anchor()
+        dx = pts[:, 0].astype(float) - ax
+        dy = pts[:, 1].astype(float) - ay
         dists = np.sqrt(dx*dx + dy*dy)
         min_idx = np.argmin(dists)
         tip = (int(pts[min_idx, 0]), int(pts[min_idx, 1]))
@@ -363,7 +419,7 @@ class DartDetector:
         return tip, ray, score, 1.0
 
     def _fallback_closest_pixel(self, cx, cy):
-        """Fallback: find the white pixel closest to board center."""
+        """Fallback: white pixel closest to the camera (within board bounds)."""
         white_pixels = cv2.findNonZero(self.debug_mask)
         if white_pixels is None or len(white_pixels) == 0:
             return None
@@ -371,16 +427,19 @@ class DartDetector:
         pixels = white_pixels.reshape(-1, 2)
         dx = pixels[:, 0].astype(float) - cx
         dy = pixels[:, 1].astype(float) - cy
-        dists = np.sqrt(dx*dx + dy*dy)
-        mask = dists < config.WARP_RADIUS * 1.08
+        center_dists = np.sqrt(dx*dx + dy*dy)
+        mask = center_dists < config.WARP_RADIUS * 1.08
 
         if not np.any(mask):
             return None
 
         pixels = pixels[mask]
-        dists = dists[mask]
+        ax, ay = self._cam_anchor()
+        dxa = pixels[:, 0].astype(float) - ax
+        dya = pixels[:, 1].astype(float) - ay
+        cam_dists = np.sqrt(dxa*dxa + dya*dya)
 
-        min_idx = np.argmin(dists)
+        min_idx = np.argmin(cam_dists)
         return (int(pixels[min_idx, 0]), int(pixels[min_idx, 1]))
 
     def _refine_tip(self, tip, cx, cy):
@@ -412,9 +471,12 @@ class DartDetector:
         pts[:, 0] += x1
         pts[:, 1] += y1
 
-        # Weight by inverse distance to center (closer to center = stronger)
-        dx = pts[:, 0] - cx
-        dy = pts[:, 1] - cy
+        # Weight by inverse distance to the camera (the tip is the end of the
+        # streak closest to the cam; weighting toward the center biased the
+        # refined tip toward the flight for darts between center and cam)
+        ax, ay = self._cam_anchor()
+        dx = pts[:, 0] - ax
+        dy = pts[:, 1] - ay
         dists = np.sqrt(dx*dx + dy*dy)
         weights = 1.0 / (dists + 1.0)  # Avoid div by zero
 

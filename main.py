@@ -171,6 +171,9 @@ class DartVision:
         self._last_status_emit = 0.0
         self._recalib_requested = False
         self._ref_captured_at: Optional[str] = None
+        # Takeout : non-None quand on attend le retrait des fléchettes
+        # (fin de tour). Voir start_takeout() / _process_takeout().
+        self._takeout: Optional[dict] = None
 
     # -----------------------------------------------------------------
     # INIT
@@ -478,6 +481,7 @@ class DartVision:
     # -----------------------------------------------------------------
     def capture_reference(self):
         print("\n[REF] Capturing reference (board must be empty)...")
+        self._takeout = None   # toute capture manuelle sort du mode takeout
         time.sleep(0.3)
         for i, cap in enumerate(self.caps):
             for _ in range(15):  # Flush buffer
@@ -494,8 +498,60 @@ class DartVision:
     # -----------------------------------------------------------------
     # DETECTION + FUSION
     # -----------------------------------------------------------------
+    def start_takeout(self):
+        """Fin de tour : suspend la détection jusqu'au retrait des fléchettes.
+
+        Sans cette pause, le diff vs référence (qui contient encore les darts)
+        voit les silhouettes des fléchettes retirées + les trous laissés par
+        les pointes, et les prend pour de nouveaux impacts. La référence est
+        recapturée une fois le retrait observé (cf. _process_takeout), ce qui
+        absorbe aussi les trous dans la nouvelle référence.
+        """
+        if self._takeout is not None:
+            return
+        self._takeout = {"since": time.time(), "activity": False, "stable": 0}
+        for det in self.detectors:
+            det.enter_takeout()
+        self.fusion.pending.clear()
+        print("\n[TAKEOUT] Turn over - waiting for darts to be removed...")
+
+    def _process_takeout(self, warped_frames):
+        """Observe motion/diff pendant le retrait. Sortie quand :
+        activité vue (main dans le champ) PUIS stabilité prolongée, avec
+        confirmation par le diff (silhouettes des darts retirées visibles)
+        — ou timeout de sécurité. Recapture alors la référence."""
+        tk = self._takeout
+        max_motion = 0
+        max_diff = 0.0
+        for warped, det in zip(warped_frames, self.detectors):
+            if warped is None:
+                continue
+            r = det.process_frame(warped)
+            max_motion = max(max_motion, r.get("motion", 0))
+            max_diff = max(max_diff, r.get("diff_score", 0.0))
+
+        if max_motion > config.TAKEOUT_ACTIVITY_MOTION:
+            tk["activity"] = True
+            tk["stable"] = 0
+            return
+        if max_motion < 800:
+            tk["stable"] += 1
+        else:
+            tk["stable"] = 0
+
+        timed_out = time.time() - tk["since"] > config.TAKEOUT_TIMEOUT_S
+        removal_seen = tk["activity"] and max_diff > config.TAKEOUT_MIN_DIFF_AREA
+        if tk["stable"] >= config.TAKEOUT_STABLE_FRAMES and (removal_seen or timed_out):
+            print("\n[TAKEOUT] Board stable, recapturing reference...")
+            for det in self.detectors:
+                det.start_new_turn()
+            self.capture_reference()   # remet aussi _takeout à None
+
     def process_frame_cycle(self, warped_frames):
         """Run detection on all cameras, feed into fusion, return result."""
+        if self._takeout is not None:
+            self._process_takeout(warped_frames)
+            return None
         for i, (warped, det) in enumerate(zip(warped_frames, self.detectors)):
             if warped is None:
                 continue
@@ -767,6 +823,12 @@ class DartVision:
             print("  [End turn]", end="")
         print()
 
+        # Fin de tour (3 darts, bust ou win) → le joueur va retirer ses
+        # fléchettes : on suspend la détection pour ne pas scorer les
+        # silhouettes/trous du retrait.
+        if result["turn_complete"]:
+            self.start_takeout()
+
     def _mouse_callback(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
             for (label, bx, by, bw, bh, key) in self.buttons:
@@ -975,6 +1037,7 @@ class DartVision:
             "confirming": config.COLOR_ORANGE,
             "cooldown":   config.COLOR_BLUE,
             "detected":   config.COLOR_GREEN,
+            "takeout":    config.COLOR_MAGENTA,
         }
         sc = state_colors.get(detector.state, config.COLOR_WHITE)
         cv2.putText(out, f"CAM {slot} | {detector.state.upper()}", (10, 26),

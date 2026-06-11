@@ -233,7 +233,12 @@
 
   function closeModal() {
     const o = document.getElementById('recalib-overlay');
-    if (o) o.remove();
+    if (o) {
+      // Couper le flux MJPEG raw avant le retrait du DOM, sinon la connexion
+      // reste ouverte et compte dans la limite de 6 connexions/hôte.
+      o.querySelectorAll('img').forEach(img => { img.src = ''; });
+      o.remove();
+    }
     document.removeEventListener('keydown', keyHandler);
     recalibState = null;
   }
