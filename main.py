@@ -498,7 +498,10 @@ class DartVision:
         self._takeout = None   # toute capture manuelle sort du mode takeout
         time.sleep(0.3)
         for i, cap in enumerate(self.caps):
-            for _ in range(15):  # Flush buffer
+            # Flush minimal : BUFFERSIZE=1 côté V4L2, 4 lectures suffisent.
+            # (15 lectures bloquaient la boucle ~3-4s → flux MJPEG figés,
+            # perçu comme un "crash des cams" après chaque fin de tour.)
+            for _ in range(4):
                 cap.read()
             ret, frame = cap.read()
             if ret and i < len(self.calibrators):

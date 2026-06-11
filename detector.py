@@ -299,6 +299,7 @@ class DartDetector:
         best_ray = None
         best_score = -1
         best_contour = None
+        best_elong = 0.0
 
         for group in grouped:
             merged = np.vstack(group)
@@ -317,6 +318,7 @@ class DartDetector:
                 best_ray = ray
                 best_score = score
                 best_contour = hull
+                best_elong = elongation
 
         # --- Step 3: Fallback to closest-pixel if morphology failed ---
         if best_tip is None:
@@ -338,6 +340,13 @@ class DartDetector:
         # Validate: skip if too far outside board (allow up to 1.08 to detect MISSes)
         tip_dist = math.sqrt((best_tip[0] - cx)**2 + (best_tip[1] - cy)**2)
         if tip_dist > config.WARP_RADIUS * 1.08:
+            return
+
+        # Zone MISS (hors double ring) : c'est là que vit tout le bruit de
+        # bord (corps du joueur, cadre du board). On n'y accepte que des
+        # blobs en FORME de fléchette (élongation suffisante) — pas les
+        # fallbacks informes. Vu en prod : spot fixe (200,720) scoré MISS.
+        if tip_dist > config.WARP_RADIUS and best_elong < config.MIN_ELONGATION:
             return
 
         self.candidate_tip = best_tip
