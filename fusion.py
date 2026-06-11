@@ -125,16 +125,13 @@ class FusionEngine:
             return d.score_data
 
         # --- Multiple cameras: try ray intersection first ---
-        rays_with_conf = [(d.ray, d.confidence, d.cam_id)
-                          for d in detections if d.ray is not None]
-
-        if len(rays_with_conf) >= 2:
-            # Try ray triangulation
-            intersection = self._intersect_rays(rays_with_conf)
-            if intersection is not None:
-                return self._build_result_from_point(
-                    intersection, detections, method="ray_intersect"
-                )
+        ray_solution = self._intersect_rays(detections)
+        if ray_solution is not None:
+            point, inliers, residual = ray_solution
+            return self._build_result_from_point(
+                point, detections, method="ray_intersect",
+                inliers=inliers, residual=residual,
+            )
 
         # Fallback to tip-based fusion
         groups = self._group_by_proximity(detections)
@@ -142,39 +139,100 @@ class FusionEngine:
             return self._fuse_group(groups[0], method="agree")
         else:
             best_group = max(groups, key=lambda g: sum(d.confidence for d in g))
-            return self._fuse_group(best_group, method="best_confidence")
+            result = self._fuse_group(best_group, method="best_confidence")
+            # Cams en désaccord : la confiance doit le refléter au lieu
+            # d'afficher la simple confiance angulaire de la meilleure cam.
+            result["fusion_confidence"] *= len(best_group) / len(detections)
+            return result
 
     # -----------------------------------------------------------------
     # RAY INTERSECTION
     # -----------------------------------------------------------------
-    def _intersect_rays(self, rays_with_conf):
+    @staticmethod
+    def _ray_dir(ray):
+        (x1, y1), (x2, y2) = ray
+        dx, dy = x2 - x1, y2 - y1
+        n = math.sqrt(dx * dx + dy * dy)
+        if n < 1e-6:
+            return None
+        return (dx / n, dy / n)
+
+    @staticmethod
+    def _perp_dist(pt, ray):
+        """Distance perpendiculaire d'un point à la DROITE portée par ray."""
+        (x1, y1), (x2, y2) = ray
+        dx, dy = x2 - x1, y2 - y1
+        n = math.sqrt(dx * dx + dy * dy)
+        if n < 1e-6:
+            return float("inf")
+        return abs((pt[0] - x1) * dy - (pt[1] - y1) * dx) / n
+
+    def _intersect_rays(self, detections):
         """
-        Find the point that best fits the intersection of multiple rays.
-        Each ray is ((x1,y1), (x2,y2)) with a confidence weight.
+        Triangulation validée géométriquement (RANSAC-lite).
 
-        For 2 rays: exact 2D line intersection.
-        For 3+ rays: least-squares closest point to all lines.
+        L'ancienne version résolvait des moindres carrés sur TOUS les rays
+        sans aucun contrôle : un seul ray pourri (ombre, mauvais axe PCA)
+        suffisait à déplacer la solution n'importe où sur le board, et elle
+        était quand même acceptée. Ici :
+          1. candidates = intersections de chaque PAIRE de rays d'angle
+             suffisant (quasi-parallèles → instables → exclus), sur le board ;
+          2. chaque candidate est notée par le nombre de rays inliers
+             (distance perpendiculaire < FUSION_RAY_RESIDUAL_MAX) puis par le
+             vote des tips 2D par cam (pondéré confiance, décroissance exp) ;
+          3. la solution est raffinée par moindres carrés sur les inliers.
 
-        Returns (x, y) or None if intersection is invalid.
+        Returns (point, inlier_detections, residual_px) ou None si aucune
+        paire cohérente (le fallback tip-based prend alors la main).
         """
         cx, cy = config.WARP_CENTER, config.WARP_CENTER
-
-        if len(rays_with_conf) == 2:
-            pt = self._intersect_two_lines(
-                rays_with_conf[0][0], rays_with_conf[1][0]
-            )
-        else:
-            pt = self._intersect_multiple_lines(rays_with_conf)
-
-        if pt is None:
+        ray_dets = [d for d in detections if d.ray is not None]
+        if len(ray_dets) < 2:
             return None
 
-        # Validate: intersection must be on the board
-        dist = math.sqrt((pt[0] - cx)**2 + (pt[1] - cy)**2)
-        if dist > config.WARP_RADIUS * 1.1:
+        min_angle = math.radians(config.FUSION_MIN_RAY_ANGLE)
+        candidates = []
+        for i in range(len(ray_dets)):
+            for j in range(i + 1, len(ray_dets)):
+                di = self._ray_dir(ray_dets[i].ray)
+                dj = self._ray_dir(ray_dets[j].ray)
+                if di is None or dj is None:
+                    continue
+                cross = abs(di[0] * dj[1] - di[1] * dj[0])
+                if cross < math.sin(min_angle):
+                    continue   # quasi-parallèles : intersection instable
+                pt = self._intersect_two_lines(ray_dets[i].ray, ray_dets[j].ray)
+                if pt is None:
+                    continue
+                if math.dist(pt, (cx, cy)) > config.WARP_RADIUS * 1.1:
+                    continue
+                candidates.append(pt)
+
+        if not candidates:
             return None
 
-        return pt
+        def support(pt):
+            inl = sum(1 for d in ray_dets
+                      if self._perp_dist(pt, d.ray) < config.FUSION_RAY_RESIDUAL_MAX)
+            sigma = config.FUSION_TIP_SUPPORT_SIGMA
+            votes = sum(d.confidence * math.exp(-math.dist(pt, d.tip) / sigma)
+                        for d in detections)
+            return (inl, votes)
+
+        best_pt = max(candidates, key=support)
+        inliers = [d for d in ray_dets
+                   if self._perp_dist(best_pt, d.ray) < config.FUSION_RAY_RESIDUAL_MAX]
+
+        # Raffinement moindres carrés sur les inliers uniquement (≥3 rays)
+        if len(inliers) >= 3:
+            refined = self._intersect_multiple_lines(
+                [(d.ray, d.confidence, d.cam_id) for d in inliers])
+            if refined is not None and \
+               math.dist(refined, (cx, cy)) <= config.WARP_RADIUS * 1.1:
+                best_pt = refined
+
+        residual = max(self._perp_dist(best_pt, d.ray) for d in inliers)
+        return best_pt, inliers, residual
 
     def _intersect_two_lines(self, ray1, ray2):
         """
@@ -244,17 +302,25 @@ class FusionEngine:
         result = np.linalg.solve(A, b)
         return (float(result[0]), float(result[1]))
 
-    def _build_result_from_point(self, point, detections, method):
+    def _build_result_from_point(self, point, detections, method,
+                                  inliers=None, residual=None):
         """Build score_data from an intersection point."""
         cx, cy = config.WARP_CENTER, config.WARP_CENTER
         radius = config.WARP_RADIUS
 
+        used = inliers if inliers else detections
         fused = compute_score(point[0], point[1], cx, cy, radius)
         fused["tip_px"] = (int(point[0]), int(point[1]))
-        fused["fusion_confidence"] = max(d.confidence for d in detections)
+        conf = max(d.confidence for d in used)
+        if residual is not None:
+            # La cohérence géométrique module la confiance affichée :
+            # résidu 0 → ×1.0, résidu = RESIDUAL_MAX → ×~0.6
+            conf *= math.exp(-residual / (2 * config.FUSION_RAY_RESIDUAL_MAX))
+            fused["fusion_residual_px"] = round(residual, 1)
+        fused["fusion_confidence"] = conf
         fused["fusion_method"] = method
-        fused["fusion_cams"] = [d.cam_id for d in detections]
-        fused["cam_id"] = max(detections, key=lambda d: d.confidence).cam_id
+        fused["fusion_cams"] = [d.cam_id for d in used]
+        fused["cam_id"] = max(used, key=lambda d: d.confidence).cam_id
         return fused
 
     # -----------------------------------------------------------------

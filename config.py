@@ -72,6 +72,16 @@ MIN_ELONGATION = 1.8          # Min length/width ratio to qualify as a dart cont
 CONTOUR_GROUP_DIST = 35       # Max px distance to merge fragmented contours
 TIP_REFINE_RADIUS = 12        # Px radius for tip sub-pixel refinement
 
+# Choix du bout "pointe" du blob : la pointe est l'extrémité FINE
+# (aiguille ~2px) et le flight l'extrémité LARGE. Indépendant de la
+# position caméra (CAM_POSITIONS s'est avéré non fiable en prod).
+TIP_WIDTH_RATIO = 1.25        # ratio large/fin mini pour trancher par la largeur
+
+# Rejet des ombres : un contour n'est candidat que si l'intensité moyenne
+# du diff à l'intérieur dépasse ce facteur × DIFF_THRESHOLD. Une ombre
+# passe à peine le seuil ; une fléchette le dépasse largement.
+SHADOW_MEAN_DIFF_FACTOR = 1.5
+
 # Takeout (retrait des fléchettes en fin de tour).
 # Après le 3e dart (ou next_turn forcé), la détection est suspendue jusqu'à
 # ce que le retrait soit observé (activité puis stabilité), puis la référence
@@ -117,6 +127,14 @@ for _i, _num in enumerate(BOARD_ORDER):
 # - If tips disagree, take the one from the highest-confidence camera
 FUSION_AGREE_DIST = 40        # Max px distance to consider "same dart"
 FUSION_WINDOW_MS = 500        # Time window to group detections from different cams
+
+# Validation géométrique de l'intersection des rays. Sans ces gardes, les
+# moindres carrés sortent TOUJOURS un point, même quand les rays sont
+# incohérents (cam qui a détecté une ombre, mauvais axe PCA…) → scores
+# fantômes validés avec une fausse confiance élevée.
+FUSION_MIN_RAY_ANGLE = 12.0     # deg mini entre 2 rays (quasi-parallèles = instable)
+FUSION_RAY_RESIDUAL_MAX = 25.0  # px : distance max ray↔point pour être "inlier"
+FUSION_TIP_SUPPORT_SIGMA = 50.0 # px : échelle du vote des tips par cam
 
 # =============================================================================
 # DISPLAY

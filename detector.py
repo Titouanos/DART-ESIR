@@ -28,6 +28,11 @@ class DartDetector:
         self.dart_count = 0
         self.debug_mask = None
         self._last_diff_score = 0
+        # Direction estimée board→caméra (vecteur unitaire), apprise sur les
+        # détections dont le profil de largeur est non-ambigu : le flight se
+        # projette à l'opposé de la cam, donc flight→pointe pointe vers elle.
+        # Survit à reset() : la caméra ne bouge pas entre les parties.
+        self.cam_bearing = None
 
     def set_reference(self, frame):
         self.reference = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -122,6 +127,7 @@ class DartDetector:
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         valid = [c for c in contours
                  if config.MIN_DART_AREA < cv2.contourArea(c) < config.MAX_DART_AREA]
+        valid = [c for c in valid if not self._is_shadow(c, diff)]
 
         result["contours"] = valid
         total_area = sum(cv2.contourArea(c) for c in valid)
@@ -203,23 +209,40 @@ class DartDetector:
                 return True
         return False
 
-    def _cam_anchor(self):
-        """Position approximative de la caméra projetée sur le plan warpé.
+    def _is_shadow(self, contour, diff):
+        """Un contour d'ombre passe à peine DIFF_THRESHOLD ; une fléchette le
+        dépasse largement. On filtre sur l'intensité moyenne du diff dans le
+        contour (calculée sur la bounding box pour rester cheap)."""
+        x, y, w, h = cv2.boundingRect(contour)
+        sub = np.zeros((h, w), dtype=np.uint8)
+        cv2.drawContours(sub, [contour - [x, y]], -1, 255, -1)
+        mean_diff = cv2.mean(diff[y:y+h, x:x+w], mask=sub)[0]
+        return mean_diff < config.DIFF_THRESHOLD * config.SHADOW_MEAN_DIFF_FACTOR
 
-        Le corps et le flight d'une fléchette sont au-dessus du plan du board ;
-        l'homographie les projette À L'OPPOSÉ de la caméra. La pointe est donc
-        l'extrémité du contour la plus PROCHE de la caméra — pas du centre du
-        board (heuristique précédente, fausse pour toute fléchette plantée
-        entre le centre et la caméra : on prenait le flight).
+    def _anchor_point(self):
+        """Point d'ancrage 'côté caméra' pour départager les cas ambigus.
+
+        Utilise le bearing APPRIS sur les détections passées (cf.
+        _update_bearing) ; tant qu'on ne sait rien, retombe sur le centre du
+        board. On ne se fie PAS à config.CAM_POSITIONS : les valeurs en prod
+        se sont avérées être les défauts, jamais les vraies positions.
         """
-        try:
-            seg = config.CAM_POSITIONS[self.cam_id]
-            ang = math.radians(config.SEGMENT_ANGLES[seg])
-        except (IndexError, KeyError, TypeError):
-            return (float(config.WARP_CENTER), float(config.WARP_CENTER))
-        r = config.WARP_RADIUS * 1.5
-        return (config.WARP_CENTER + r * math.sin(ang),
-                config.WARP_CENTER - r * math.cos(ang))
+        if self.cam_bearing is not None:
+            r = config.WARP_RADIUS * 1.5
+            return (config.WARP_CENTER + self.cam_bearing[0] * r,
+                    config.WARP_CENTER + self.cam_bearing[1] * r)
+        return (float(config.WARP_CENTER), float(config.WARP_CENTER))
+
+    def _update_bearing(self, vec):
+        """EMA de la direction board→caméra (vec = flight→pointe, unitaire)."""
+        if self.cam_bearing is None:
+            bx, by = vec
+        else:
+            bx = 0.7 * self.cam_bearing[0] + 0.3 * vec[0]
+            by = 0.7 * self.cam_bearing[1] + 0.3 * vec[1]
+        n = math.sqrt(bx * bx + by * by)
+        if n > 1e-6:
+            self.cam_bearing = (bx / n, by / n)
 
     def _find_dart_tip(self, contours):
         """
@@ -250,7 +273,10 @@ class DartDetector:
             if area < config.MIN_DART_AREA:
                 continue
 
-            tip, ray, score, elongation = self._analyze_contour_shape(hull, cx, cy)
+            # PCA et profil de largeur sur les points d'outline bruts (le hull
+            # est trop clairsemé pour estimer la largeur près des extrémités)
+            tip, ray, score, elongation = self._analyze_contour_shape(
+                merged, cx, cy, hull_area=area)
             if tip is not None and score > best_score:
                 best_tip = tip
                 best_ray = ray
@@ -320,9 +346,11 @@ class DartDetector:
 
         return groups
 
-    def _analyze_contour_shape(self, contour, cx, cy):
+    def _analyze_contour_shape(self, contour, cx, cy, hull_area=None):
         """
         PCA-based axis extraction — robust and angle-convention-free.
+        Le bout "pointe" est choisi par le PROFIL DE LARGEUR : l'aiguille est
+        fine (~2px), le flight est large. Ne dépend d'aucune position caméra.
         Returns (tip, ray, quality_score, elongation).
         """
         pts = contour.reshape(-1, 2).astype(np.float64)
@@ -339,11 +367,12 @@ class DartDetector:
         eigenvalues, eigenvectors = np.linalg.eigh(cov)
         # eigh returns sorted ascending; last = largest variance = major axis
         major_axis = eigenvectors[:, -1]  # (dx, dy) unit-ish vector
+        minor_axis = eigenvectors[:, 0]
         minor_val = max(eigenvalues[0], 1e-6)
         major_val = max(eigenvalues[1], 1e-6)
 
         elongation = math.sqrt(major_val / minor_val)
-        area = cv2.contourArea(contour)
+        area = hull_area if hull_area is not None else cv2.contourArea(contour)
 
         # Normalize direction vector
         axis_len = math.sqrt(major_axis[0]**2 + major_axis[1]**2)
@@ -358,19 +387,38 @@ class DartDetector:
 
         # ---- ELONGATED: project contour points onto major axis ----
         projections = centered @ major_axis
-        min_proj = np.min(projections)
-        max_proj = np.max(projections)
+        perp = centered @ minor_axis
+        min_proj = float(np.min(projections))
+        max_proj = float(np.max(projections))
 
         # Two extremes along the major axis
         end1 = (mean[0] + dir_x * max_proj, mean[1] + dir_y * max_proj)
         end2 = (mean[0] + dir_x * min_proj, mean[1] + dir_y * min_proj)
 
-        # Tip = the extreme closest to the CAMERA (the flight projects away
-        # from the camera onto the board plane, see _cam_anchor)
-        ax, ay = self._cam_anchor()
-        d1 = math.sqrt((end1[0] - ax)**2 + (end1[1] - ay)**2)
-        d2 = math.sqrt((end2[0] - ax)**2 + (end2[1] - ay)**2)
-        tip = (int(end1[0]), int(end1[1])) if d1 < d2 else (int(end2[0]), int(end2[1]))
+        # Largeur moyenne (|perp|) près de chaque extrémité (30% du span).
+        zone = 0.30 * (max_proj - min_proj)
+        hi = projections > max_proj - zone
+        lo = projections < min_proj + zone
+        w_hi = float(np.mean(np.abs(perp[hi]))) if np.any(hi) else 0.0
+        w_lo = float(np.mean(np.abs(perp[lo]))) if np.any(lo) else 0.0
+
+        w_thin, w_wide = min(w_hi, w_lo), max(w_hi, w_lo)
+        if w_wide >= config.TIP_WIDTH_RATIO * max(w_thin, 0.5):
+            # Profil net : la pointe est le bout FIN
+            tip_f, other = (end1, end2) if w_hi < w_lo else (end2, end1)
+            # Apprend la direction de la caméra : flight→pointe pointe vers elle
+            vx, vy = tip_f[0] - other[0], tip_f[1] - other[1]
+            vn = math.sqrt(vx * vx + vy * vy)
+            if vn > 1e-6:
+                self._update_bearing((vx / vn, vy / vn))
+        else:
+            # Ambigu (blob tronqué, aiguille hors masque…) : départage par le
+            # bearing appris (ou le centre du board en tout début de session)
+            ax, ay = self._anchor_point()
+            d1 = math.dist(end1, (ax, ay))
+            d2 = math.dist(end2, (ax, ay))
+            tip_f = end1 if d1 < d2 else end2
+        tip = (int(tip_f[0]), int(tip_f[1]))
 
         # Ray: anchor at the tip (instead of centroid) to avoid flight bias,
         # and extend along the major axis
@@ -387,7 +435,7 @@ class DartDetector:
     def _tip_from_closest_contour_point(self, contour, cx, cy):
         """
         For round/small contours: tip = contour point closest to the camera
-        (same projection argument as _cam_anchor).
+        side (learned bearing, see _anchor_point).
         Ray = centroid → board center direction.
         Returns (tip, ray, score, elongation=1.0).
         """
@@ -395,7 +443,7 @@ class DartDetector:
         if len(pts) == 0:
             return None, None, 0, 0
 
-        ax, ay = self._cam_anchor()
+        ax, ay = self._anchor_point()
         dx = pts[:, 0].astype(float) - ax
         dy = pts[:, 1].astype(float) - ay
         dists = np.sqrt(dx*dx + dy*dy)
@@ -434,7 +482,7 @@ class DartDetector:
             return None
 
         pixels = pixels[mask]
-        ax, ay = self._cam_anchor()
+        ax, ay = self._anchor_point()
         dxa = pixels[:, 0].astype(float) - ax
         dya = pixels[:, 1].astype(float) - ay
         cam_dists = np.sqrt(dxa*dxa + dya*dya)
@@ -471,12 +519,11 @@ class DartDetector:
         pts[:, 0] += x1
         pts[:, 1] += y1
 
-        # Weight by inverse distance to the camera (the tip is the end of the
-        # streak closest to the cam; weighting toward the center biased the
-        # refined tip toward the flight for darts between center and cam)
-        ax, ay = self._cam_anchor()
-        dx = pts[:, 0] - ax
-        dy = pts[:, 1] - ay
+        # Centroïde local pondéré vers le candidat lui-même : lisse le bruit
+        # de masque sans introduire de biais directionnel (l'ancien poids vers
+        # le centre du board tirait la pointe vers le flight selon le côté).
+        dx = pts[:, 0] - tip[0]
+        dy = pts[:, 1] - tip[1]
         dists = np.sqrt(dx*dx + dy*dy)
         weights = 1.0 / (dists + 1.0)  # Avoid div by zero
 
