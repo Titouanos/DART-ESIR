@@ -560,6 +560,10 @@ class DartVision:
             for det in self.detectors:
                 det.start_new_turn()
             self.capture_reference()   # remet aussi _takeout à None
+            # Grâce post-takeout : si le joueur traîne encore près du board,
+            # son départ ne doit pas être pris pour un lancer.
+            for det in self.detectors:
+                det.cooldown = max(det.cooldown, 20)
 
     def _post_throw_sync(self, warped_frames):
         """Après un lancer scoré : toutes les cams absorbent la fléchette.

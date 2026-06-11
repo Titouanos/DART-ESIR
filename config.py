@@ -96,7 +96,10 @@ REF_STALE_CYCLES = 4
 # est recapturée — les trous laissés par les pointes sont ainsi absorbés
 # dans la nouvelle référence au lieu de générer de fausses détections.
 TAKEOUT_ACTIVITY_MOTION = 1500   # px de motion inter-frame = main dans le champ
-TAKEOUT_STABLE_FRAMES = 15       # cycles stables consécutifs avant recapture
+# ~35 cycles ≈ 1.5-2s : assez long pour que le joueur soit vraiment reparti.
+# À 15 on recapturait la référence avec le bras encore dans le champ →
+# détections fantômes récurrentes aux mêmes positions après chaque tour.
+TAKEOUT_STABLE_FRAMES = 35
 TAKEOUT_MIN_DIFF_AREA = 160      # aire de diff vs ref attestant darts retirées
 TAKEOUT_TIMEOUT_S = 15.0         # filet de sécurité : recapture forcée
 
@@ -134,7 +137,10 @@ for _i, _num in enumerate(BOARD_ORDER):
 # - If tips agree (< FUSION_AGREE_DIST px), average them weighted by confidence
 # - If tips disagree, take the one from the highest-confidence camera
 FUSION_AGREE_DIST = 40        # Max px distance to consider "same dart"
-FUSION_WINDOW_MS = 800        # Time window to group detections from different cams
+# 1200ms : les cams se stabilisent à des moments différents (STABLE_FRAMES
+# à des cadences effectives différentes). À 800ms la 2e cam arrivait souvent
+# APRÈS la fusion → score "single" + info perdue.
+FUSION_WINDOW_MS = 1200
 # Après un lancer fusionné, toute détection à moins de cette distance du point
 # scoré est ignorée quelques secondes : empêche les cams retardataires de
 # re-scorer LA MÊME fléchette en "single" (vu en prod : 1 dart → 3 throws).
@@ -148,6 +154,11 @@ FUSION_SUPPRESS_S = 3.0
 FUSION_MIN_RAY_ANGLE = 12.0     # deg mini entre 2 rays (quasi-parallèles = instable)
 FUSION_RAY_RESIDUAL_MAX = 25.0  # px : distance max ray↔point pour être "inlier"
 FUSION_TIP_SUPPORT_SIGMA = 50.0 # px : échelle du vote des tips par cam
+# Une intersection de paire n'est valable que si AU MOINS UNE des deux cams
+# a son tip 2D près du point (un tip peut être décalé LE LONG de l'axe —
+# mauvais bout choisi — mais deux rays dont AUCUN tip ne corrobore le point
+# croisent probablement deux objets différents).
+FUSION_MAX_TIP_GAP = 150.0
 
 # =============================================================================
 # DISPLAY

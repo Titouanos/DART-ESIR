@@ -240,6 +240,14 @@ class FusionEngine:
                     continue
                 if math.dist(pt, (cx, cy)) > config.WARP_RADIUS * 1.1:
                     continue
+                # Corroboration : au moins un des deux tips de la paire doit
+                # être proche du point (sinon = croisement de 2 objets
+                # différents, p.ex. la fléchette sur une cam et un bout de
+                # bras/ombre sur l'autre).
+                gap = min(math.dist(pt, ray_dets[i].tip),
+                          math.dist(pt, ray_dets[j].tip))
+                if gap > config.FUSION_MAX_TIP_GAP:
+                    continue
                 candidates.append(pt)
 
         if not candidates:
