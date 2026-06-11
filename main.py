@@ -1016,12 +1016,16 @@ class DartVision:
                 if ok:
                     self.bridge.set_frame(slot, jpg.tobytes())
 
-                # 2) Frame annotée — pour le bouton debug
+                # 2) Frame annotée — pour le bouton debug. Downscalée à 560px :
+                # affichée en tiers d'écran dans l'overlay, et le hotspot ne
+                # tient pas 3 flux 800px (streams qui meurent par à-coups).
                 det = self.detectors[i] if i < len(self.detectors) else None
                 if det is not None:
                     annotated = self._annotate_debug(warped, det, slot)
+                    annotated = cv2.resize(annotated, (560, 560),
+                                           interpolation=cv2.INTER_AREA)
                     ok_d, jpg_d = cv2.imencode(".jpg", annotated,
-                                                [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                                                [int(cv2.IMWRITE_JPEG_QUALITY), 65])
                     if ok_d:
                         self.bridge.set_frame_debug(slot, jpg_d.tobytes())
             except Exception:

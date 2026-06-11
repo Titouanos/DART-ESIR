@@ -109,21 +109,31 @@ def build_app(bridge: Bridge) -> FastAPI:
     # --- MJPEG par slot caméra ------------------------------------------
     BOUNDARY = b"--dartvision"
 
-    def _make_mjpeg_response(slot: str, getter) -> StreamingResponse:
-        """Factory pour les flux MJPEG (clean ou debug)."""
+    def _make_mjpeg_response(slot: str, getter, fps: float = 15.0) -> StreamingResponse:
+        """Factory pour les flux MJPEG (clean ou debug).
+
+        Le LAN est un hotspot téléphone : la bande passante est LA ressource
+        rare (3 flux simultanés dans l'overlay debug). Deux économies :
+          - fps paramétrable par type de flux ;
+          - dédup : si la frame n'a pas changé depuis le dernier envoi
+            (même objet bytes côté bridge), on dort sans renvoyer.
+        """
         async def generator():
             placeholder = _placeholder_jpeg(slot)
+            last_sent = None
             while True:
                 frame = getter(slot) or placeholder
-                yield (
-                    BOUNDARY
-                    + b"\r\nContent-Type: image/jpeg\r\nContent-Length: "
-                    + str(len(frame)).encode("ascii")
-                    + b"\r\n\r\n"
-                    + frame
-                    + b"\r\n"
-                )
-                await asyncio.sleep(1.0 / 20.0)
+                if frame is not last_sent:
+                    last_sent = frame
+                    yield (
+                        BOUNDARY
+                        + b"\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                        + str(len(frame)).encode("ascii")
+                        + b"\r\n\r\n"
+                        + frame
+                        + b"\r\n"
+                    )
+                await asyncio.sleep(1.0 / fps)
 
         return StreamingResponse(
             generator(),
@@ -132,21 +142,23 @@ def build_app(bridge: Bridge) -> FastAPI:
 
     @app.get("/api/cam/{slot}/mjpeg")
     async def cam_mjpeg(slot: str) -> StreamingResponse:
-        return _make_mjpeg_response(slot.upper(), bridge.get_frame)
+        return _make_mjpeg_response(slot.upper(), bridge.get_frame, fps=15.0)
 
     @app.get("/api/cam/{slot}/debug.mjpeg")
     async def cam_mjpeg_debug(slot: str) -> StreamingResponse:
         """Flux annoté (tip détecté, contour, ray, état). Utile pour debug
         quand la détection paraît imprécise — visualiser ce que le pipeline
         voit AVANT que la fusion ne donne un résultat."""
-        return _make_mjpeg_response(slot.upper(), bridge.get_frame_debug)
+        return _make_mjpeg_response(slot.upper(), bridge.get_frame_debug, fps=12.0)
 
     @app.get("/api/cam/{slot}/raw.mjpeg")
     async def cam_mjpeg_raw(slot: str) -> StreamingResponse:
         """Flux RAW (pré-warp, taille native cam). Utilisé par le flow de
         recalibration web : l'utilisateur clique sur les 4 wires du board
-        dans l'image native, on calcule l'homographie depuis ces points."""
-        return _make_mjpeg_response(slot.upper(), bridge.get_frame_raw)
+        dans l'image native, on calcule l'homographie depuis ces points.
+        Full-res obligatoire (précision du clic), mais 8 fps suffisent
+        pour une scène statique."""
+        return _make_mjpeg_response(slot.upper(), bridge.get_frame_raw, fps=8.0)
 
     # --- Calibration web (4-points clic per cam) -----------------------
     # 4 points cibles dans l'image WARPÉE 800×800. L'ordre est canonique :

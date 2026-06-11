@@ -564,8 +564,29 @@
       $('#gdbg-mode-debug').addEventListener('click', () => setMode('debug'));
       $('#gdbg-mode-clean').addEventListener('click', () => setMode('clean'));
 
+      // Récupération des flux : sur le hotspot, un stream MJPEG peut mourir
+      // (ERR_INCOMPLETE_CHUNKED_ENCODING) — l'<img> reste alors figée/morte.
+      // On retry avec un léger backoff tant que l'overlay est ouvert.
+      $$('#gdbg-grid img[data-gdbg-slot]').forEach(img => {
+        img.addEventListener('error', () => {
+          if (img._retryTimer) return;
+          img._retryTimer = setTimeout(() => {
+            img._retryTimer = null;
+            if (!document.getElementById('gdbg-overlay')) return;
+            const slot = img.dataset.gdbgSlot;
+            img.src = `/api/cam/${slot}/${dbgMode === 'debug' ? 'debug.mjpeg' : 'mjpeg'}?t=${Date.now()}`;
+          }, 2000);
+        });
+      });
+
       document.addEventListener('keydown', escClose);
     }
+
+    // Le réseau est revenu (la WS s'est reconnectée) : on relance les flux
+    // de l'overlay s'il est ouvert — ils sont probablement morts du même blip.
+    ws.on('_status', ({ connected }) => {
+      if (connected && document.getElementById('gdbg-overlay')) setMode(dbgMode);
+    });
 
     function escClose(e) {
       if (e.key === 'Escape' && document.getElementById('gdbg-overlay')) {
