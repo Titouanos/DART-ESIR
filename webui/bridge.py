@@ -42,6 +42,7 @@ class Controller(Protocol):
     def request_shutdown(self) -> None: ...
     def reload_calibration(self) -> bool: ...
     def start_takeout(self) -> None: ...
+    def is_in_takeout(self) -> bool: ...
 
 
 # Throttling minimum entre deux pushes `system_status` quand seules
@@ -279,6 +280,15 @@ class Bridge:
                 return {"ok": ok, "msg": None if ok else "Rien à annuler"}
 
             if cmd == "next_turn":
+                # Garde anti double-avance : si un tour vient de se terminer
+                # tout seul (3 fléchettes) on est déjà en takeout. Re-cliquer
+                # "joueur suivant" avancerait une 2e fois → à 2 joueurs ça
+                # revient AU MÊME joueur (bug "ça repasse pas à J2"). Dans ce
+                # cas on ne ré-avance pas, on s'assure juste que le takeout tourne.
+                in_takeout = (self._controller is not None
+                              and getattr(self._controller, "is_in_takeout", lambda: False)())
+                if in_takeout:
+                    return {"ok": True, "msg": "Tour déjà terminé (retrait en cours)"}
                 self._game.force_next_turn()
                 # Des fléchettes sont probablement encore plantées : on passe
                 # en takeout pour que leur retrait ne génère pas de faux scores.

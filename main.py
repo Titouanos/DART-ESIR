@@ -519,6 +519,12 @@ class DartVision:
     # -----------------------------------------------------------------
     # DETECTION + FUSION
     # -----------------------------------------------------------------
+    def is_in_takeout(self) -> bool:
+        """True si un tour vient de finir et qu'on attend le retrait des
+        fléchettes (détection en pause). Lu par le bridge pour ne pas
+        double-avancer si l'utilisateur clique 'joueur suivant' à ce moment."""
+        return self._takeout is not None
+
     def start_takeout(self):
         """Fin de tour : suspend la détection jusqu'au retrait des fléchettes.
 
@@ -561,10 +567,24 @@ class DartVision:
         else:
             tk["stable"] = 0
 
-        timed_out = time.time() - tk["since"] > config.TAKEOUT_TIMEOUT_S
+        elapsed = time.time() - tk["since"]
+        stable_enough = tk["stable"] >= config.TAKEOUT_STABLE_FRAMES
         removal_seen = tk["activity"] and max_diff > config.TAKEOUT_MIN_DIFF_AREA
-        if tk["stable"] >= config.TAKEOUT_STABLE_FRAMES and (removal_seen or timed_out):
-            print("\n[TAKEOUT] Board stable, recapturing reference...")
+
+        # Sortie rapide : retrait constaté + board calme (cas nominal).
+        # Filet souple : calme prolongé seul, passé TAKEOUT_TIMEOUT_S.
+        # Plafond DUR : on débloque le joueur suivant quoi qu'il arrive — sinon
+        # un board qui ne se calme jamais (bruit cam) bloquait J2 30-70s.
+        reason = None
+        if removal_seen and stable_enough:
+            reason = "retrait constaté + calme"
+        elif stable_enough and elapsed > config.TAKEOUT_TIMEOUT_S:
+            reason = f"calme prolongé ({elapsed:.0f}s)"
+        elif elapsed > config.TAKEOUT_MAX_S:
+            reason = f"plafond {config.TAKEOUT_MAX_S:.0f}s (forcé)"
+
+        if reason:
+            print(f"\n[TAKEOUT] {reason} — recapture référence, au joueur suivant")
             for det in self.detectors:
                 det.start_new_turn()
             self.capture_reference()   # remet aussi _takeout à None

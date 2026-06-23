@@ -96,12 +96,16 @@ REF_STALE_CYCLES = 4
 # est recapturée — les trous laissés par les pointes sont ainsi absorbés
 # dans la nouvelle référence au lieu de générer de fausses détections.
 TAKEOUT_ACTIVITY_MOTION = 1500   # px de motion inter-frame = main dans le champ
-# ~35 cycles ≈ 1.5-2s : assez long pour que le joueur soit vraiment reparti.
-# À 15 on recapturait la référence avec le bras encore dans le champ →
-# détections fantômes récurrentes aux mêmes positions après chaque tour.
-TAKEOUT_STABLE_FRAMES = 35
+# ~12 cycles ≈ 1-1.5s de calme : assez pour que le bras soit reparti, sans
+# bloquer le joueur suivant. (35 était trop : si le board ne devenait jamais
+# calme 35 frames d'affilée — bruit cam, joueur qui traîne — le takeout
+# restait coincé 35-70s et J2 ne pouvait pas scorer.)
+TAKEOUT_STABLE_FRAMES = 12
 TAKEOUT_MIN_DIFF_AREA = 160      # aire de diff vs ref attestant darts retirées
-TAKEOUT_TIMEOUT_S = 15.0         # filet de sécurité : recapture forcée
+TAKEOUT_TIMEOUT_S = 8.0          # filet souple : sortie sur calme seul après ce délai
+# Plafond DUR : on ne bloque JAMAIS le joueur suivant au-delà de ce délai,
+# stabilité atteinte ou non. Garantit que J2 peut toujours scorer ~rapidement.
+TAKEOUT_MAX_S = 16.0
 
 # =============================================================================
 # CONFIDENCE ZONES
