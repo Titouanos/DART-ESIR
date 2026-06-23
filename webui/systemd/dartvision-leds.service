@@ -1,0 +1,13 @@
+[Unit]
+Description=DartVision — effets LED (WS2811/WS2812 via SPI, python3 systeme + blinka)
+After=dartvision.service
+Wants=dartvision.service
+
+[Service]
+# python3 SYSTEME (a blinka/neopixel_spi) — surtout PAS le venv
+ExecStart=/usr/bin/python3 /home/rt/DART-ESIR-new/webui/led_service.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

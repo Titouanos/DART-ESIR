@@ -18,6 +18,7 @@ Principes :
 import asyncio
 import json
 import logging
+import socket
 import threading
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Set
@@ -74,6 +75,16 @@ class Bridge:
         self._last_status_push: float = 0.0
         self._last_status_bools: Dict[str, Any] = {}
 
+        # Miroir UDP des events de jeu → service LED (process séparé, python3
+        # système avec blinka). Fire-and-forget : sendto ne bloque jamais et
+        # n'échoue pas s'il n'y a aucun listener. Zéro impact sur le jeu si le
+        # service LED est absent/planté.
+        self._led_addr = ("127.0.0.1", 9876)
+        try:
+            self._led_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        except Exception:
+            self._led_sock = None
+
     # =================================================================
     # CYCLE DE VIE
     # =================================================================
@@ -100,6 +111,8 @@ class Bridge:
     # =================================================================
     def _on_game_event(self, event_type: str, payload: dict) -> None:
         """Appelé synchrone depuis GameEngine ; ré-émis vers tous les WS clients."""
+        # Miroir UDP vers le service LED (effets selon score/bust/win/tour).
+        self._emit_led(event_type, payload)
         # `state_changed` (undo, etc.) → snapshot complet pour resynchroniser proprement
         if event_type == "state_changed" or event_type == "game_reset":
             if self._game is not None:
@@ -107,6 +120,18 @@ class Bridge:
             return
         # Sinon : relai 1-pour-1 (le type WS == le type game)
         self._broadcast(event_type, payload)
+
+    def _emit_led(self, event_type: str, payload: dict) -> None:
+        """Envoie l'event en UDP au service LED. Best-effort, jamais bloquant."""
+        sock = getattr(self, "_led_sock", None)
+        if sock is None:
+            return
+        try:
+            msg = json.dumps({"type": event_type, "payload": payload},
+                             separators=(",", ":"), default=str).encode("utf-8")
+            sock.sendto(msg, self._led_addr)
+        except Exception:
+            pass  # pas de listener / erreur réseau → on ignore
 
     # =================================================================
     # BROADCAST THREAD-SAFE
