@@ -308,6 +308,36 @@ def build_app(bridge: Bridge) -> FastAPI:
             ],
         }
 
+    @app.get("/api/health")
+    async def health():
+        """Bilan santé en un appel HTTP (sans WebSocket) : sert au check
+        pré-demo « le Pi est-il prêt ? ». Résume le dernier system_status
+        connu du bridge + un verdict global facile à tester depuis un script.
+
+        Le simple fait que cette route réponde 200 prouve déjà que le
+        serveur web tourne ; les champs disent si les caméras et la
+        référence sont prêtes pour scorer."""
+        status = getattr(bridge, "_last_status", None) or {}
+        cams = status.get("cams", [])
+        cams_ok = sum(1 for c in cams if c.get("ok"))
+        ref_ok = bool(status.get("reference", {}).get("ok"))
+        calib_ok = bool(status.get("calibration", {}).get("ok"))
+        # « prêt à jouer » = serveur up + toutes cams vivantes + ref capturée
+        ready = bool(cams) and cams_ok == len(cams) and ref_ok and calib_ok
+        return {
+            "ok": True,                      # la route répond → serveur vivant
+            "ready": ready,
+            "cams_ok": cams_ok,
+            "cams_total": len(cams),
+            "cams": [{"id": c.get("id"), "ok": c.get("ok"),
+                      "seg": c.get("seg")} for c in cams],
+            "reference_ok": ref_ok,
+            "reference_at": status.get("reference", {}).get("captured_at"),
+            "calibration_ok": calib_ok,
+            "game_state": status.get("game_state"),
+            "has_status": bool(status),
+        }
+
     # --- WebSocket -------------------------------------------------------
     @app.websocket("/ws")
     async def ws_handler(ws: WebSocket) -> None:
