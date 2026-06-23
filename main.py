@@ -537,6 +537,11 @@ class DartVision:
             if det.state == "takeout":
                 det.state = "idle"
                 det.stable_count = 0
+        # LED : retour à l'état prêt (blanc).
+        try:
+            self.bridge.notify_led("takeout_end", {})
+        except Exception:
+            pass
 
     def start_takeout(self):
         """Fin de tour : suspend la détection jusqu'au retrait des fléchettes.
@@ -554,6 +559,11 @@ class DartVision:
         for det in self.detectors:
             det.enter_takeout()
         self.fusion.pending.clear()
+        # LED : phase "attends" (ambre) — fin de tour, retrait en cours.
+        try:
+            self.bridge.notify_led("takeout_start", {})
+        except Exception:
+            pass
         print("\n[TAKEOUT] Turn over - waiting for darts to be removed...")
 
     def _process_takeout(self, warped_frames):
@@ -605,6 +615,11 @@ class DartVision:
             # son départ ne doit pas être pris pour un lancer.
             for det in self.detectors:
                 det.cooldown = max(det.cooldown, 20)
+            # LED : phase "prêt" (flash vert → blanc) — au joueur suivant.
+            try:
+                self.bridge.notify_led("takeout_end", {})
+            except Exception:
+                pass
 
     def _post_throw_sync(self, warped_frames):
         """Après un lancer scoré : toutes les cams absorbent la fléchette.
@@ -941,6 +956,46 @@ class DartVision:
         # silhouettes/trous du retrait.
         if result["turn_complete"]:
             self.start_takeout()
+
+    # -----------------------------------------------------------------
+    # SAISIE MANUELLE (bouton MISS / correction quand la détection se trompe)
+    # -----------------------------------------------------------------
+    def _manual_score_data(self, number: int, multiplier: int) -> dict:
+        """Construit un score_data compatible register_throw à partir d'une
+        saisie (number, multiplier). number=0 ou multiplier=0 → MISS."""
+        number = int(number); multiplier = int(multiplier)
+        common = {"r_frac": 0.5, "angle": 0.0, "tip_px": None,
+                  "fusion_method": "manual", "fusion_cams": [],
+                  "fusion_confidence": 1.0}
+        if number == 0 or multiplier == 0:
+            return {"number": 0, "multiplier": 0, "ring": "outside",
+                    "score": 0, "label": "MISS", **common}
+        if number == 25:
+            if multiplier >= 2:
+                return {"number": 25, "multiplier": 2, "ring": "double_bull",
+                        "score": 50, "label": "D-BULL", **common}
+            return {"number": 25, "multiplier": 1, "ring": "single_bull",
+                    "score": 25, "label": "S-BULL", **common}
+        ring = {1: "single", 2: "double", 3: "triple"}.get(multiplier, "single")
+        pre = {1: "S", 2: "D", 3: "T"}.get(multiplier, "S")
+        return {"number": number, "multiplier": multiplier, "ring": ring,
+                "score": number * multiplier, "label": f"{pre}{number}", **common}
+
+    def manual_throw(self, number: int, multiplier: int = 1):
+        """Enregistre un lancer saisi à la main (MISS ou valeur). Passe par
+        le même chemin que la détection (takeout/avance de tour gérés)."""
+        sd = self._manual_score_data(number, multiplier)
+        print(f"[MANUAL] {sd['label']} ({sd['score']} pts)")
+        self._handle_detection(sd)
+
+    def correct_last(self, number: int, multiplier: int = 1):
+        """Corrige le dernier lancer : sort du takeout si besoin, annule le
+        dernier lancer, puis ré-enregistre la bonne valeur."""
+        self.cancel_takeout()
+        undone = self.game.undo_last_throw()
+        print(f"[MANUAL] correction (undo={'ok' if undone else 'rien'}) "
+              f"→ nouvelle valeur")
+        self.manual_throw(number, multiplier)
 
     def _mouse_callback(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:

@@ -45,6 +45,8 @@ class Controller(Protocol):
     def start_takeout(self) -> None: ...
     def is_in_takeout(self) -> bool: ...
     def cancel_takeout(self) -> None: ...
+    def manual_throw(self, number: int, multiplier: int) -> None: ...
+    def correct_last(self, number: int, multiplier: int) -> None: ...
 
 
 # Throttling minimum entre deux pushes `system_status` quand seules
@@ -121,6 +123,18 @@ class Bridge:
             return
         # Sinon : relai 1-pour-1 (le type WS == le type game)
         self._broadcast(event_type, payload)
+        # Au changement de tour/joueur, renvoie aussi un snapshot complet pour
+        # que l'UI réconcilie tout — notamment vider les chips du tour précédent
+        # (les handlers throw patchent les chips à la volée mais ne les
+        # réinitialisent pas ; sans snapshot ici ils restaient affichés).
+        if event_type in ("turn_end", "player_change") and self._game is not None:
+            self._broadcast("snapshot", self._game.get_full_state())
+
+    def notify_led(self, event_type: str, payload: dict = None) -> None:
+        """Point d'entrée public pour que le contrôleur (main.py) pousse des
+        events LED qui ne passent pas par le GameEngine — typiquement les
+        phases de takeout (takeout_start / takeout_end)."""
+        self._emit_led(event_type, payload or {})
 
     def _emit_led(self, event_type: str, payload: dict) -> None:
         """Envoie l'event en UDP au service LED. Best-effort, jamais bloquant."""
@@ -309,6 +323,17 @@ class Bridge:
                 # Déclenche une démo sur le ruban (service LED séparé, UDP).
                 self._emit_led("test", {})
                 return {"ok": True, "msg": "Test LEDs lancé"}
+
+            if cmd in ("manual_throw", "correct_last"):
+                if self._controller is None:
+                    return {"ok": False, "msg": "Controller non attaché"}
+                num = int(payload.get("number", 0))
+                mult = int(payload.get("multiplier", 1))
+                if cmd == "manual_throw":
+                    self._controller.manual_throw(num, mult)
+                else:
+                    self._controller.correct_last(num, mult)
+                return {"ok": True}
 
             if cmd == "next_turn":
                 # Garde anti double-avance : si un tour vient de se terminer

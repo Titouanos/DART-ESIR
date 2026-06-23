@@ -331,9 +331,97 @@
     document.body.classList.add('state-win');
   }
 
+  // ─── Pavé de saisie manuelle (correction / ajout de lancer) ─────────
+  function openScoreKeypad() {
+    if (document.getElementById('kp-overlay')) return;
+    if (!document.getElementById('kp-css')) {
+      const css = `
+        .kp-overlay{position:fixed;inset:0;z-index:6000;display:flex;
+          align-items:center;justify-content:center;background:rgba(0,0,0,.55);}
+        .kp-sheet{background:var(--paper,#f5f1e8);color:var(--ink,#1a1a1a);
+          border-radius:14px;padding:18px;max-width:min(94vw,460px);width:100%;
+          box-shadow:0 20px 60px rgba(0,0,0,.4);}
+        .kp-head{display:flex;justify-content:space-between;align-items:center;
+          margin-bottom:12px;font-weight:700;font-size:1.1rem;}
+        .kp-close{border:none;background:#0002;border-radius:8px;padding:6px 12px;
+          cursor:pointer;font-size:1rem;}
+        .kp-row{display:flex;gap:8px;margin-bottom:10px;}
+        .kp-row button{flex:1;padding:10px;border:2px solid #0002;border-radius:10px;
+          background:#fff;cursor:pointer;font-weight:600;font-size:.95rem;}
+        .kp-row button.is-on{background:var(--pink,#ff5b9c);color:#fff;border-color:transparent;}
+        .kp-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;}
+        .kp-grid button{padding:13px 0;border:1px solid #0003;border-radius:9px;
+          background:#fff;cursor:pointer;font-size:1.05rem;font-weight:600;}
+        .kp-grid button:active{transform:scale(.95);}
+        .kp-grid .kp-miss{grid-column:span 2;background:#ffd9d9;}
+        .kp-grid .kp-bull{background:#d9f0ff;}
+        .kp-hint{font-size:.8rem;opacity:.7;margin-top:10px;text-align:center;}`;
+      const s = document.createElement('style'); s.id = 'kp-css'; s.textContent = css;
+      document.head.appendChild(s);
+    }
+    const state = { target: 'correct', mult: 1 };
+    const ov = document.createElement('div');
+    ov.className = 'kp-overlay'; ov.id = 'kp-overlay';
+    const nums = Array.from({ length: 20 }, (_, i) => i + 1)
+      .map(n => `<button data-num="${n}" data-bull="0">${n}</button>`).join('');
+    ov.innerHTML = `
+      <div class="kp-sheet">
+        <div class="kp-head"><span>Score manuel</span>
+          <button class="kp-close" id="kp-close">Fermer ✕</button></div>
+        <div class="kp-row" id="kp-target">
+          <button data-t="correct" class="is-on">✎ Corriger le dernier</button>
+          <button data-t="add">+ Ajouter un lancer</button>
+        </div>
+        <div class="kp-row" id="kp-mult">
+          <button data-m="1" class="is-on">Simple</button>
+          <button data-m="2">Double</button>
+          <button data-m="3">Triple</button>
+        </div>
+        <div class="kp-grid" id="kp-grid">
+          ${nums}
+          <button class="kp-bull" data-num="25" data-bull="1">BULL</button>
+          <button class="kp-miss" data-num="0" data-bull="0">MISS</button>
+        </div>
+        <div class="kp-hint">Choisis multiplicateur puis un numéro — c'est envoyé direct.</div>
+      </div>`;
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    $('#kp-close', ov).addEventListener('click', close);
+    ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+    $$('#kp-target button', ov).forEach(b => b.addEventListener('click', () => {
+      state.target = b.dataset.t;
+      $$('#kp-target button', ov).forEach(x => x.classList.toggle('is-on', x === b));
+    }));
+    $$('#kp-mult button', ov).forEach(b => b.addEventListener('click', () => {
+      state.mult = +b.dataset.m;
+      $$('#kp-mult button', ov).forEach(x => x.classList.toggle('is-on', x === b));
+    }));
+    $$('#kp-grid button', ov).forEach(b => b.addEventListener('click', () => {
+      const num = +b.dataset.num;
+      // MISS = (0,0) ; BULL = 25 avec mult 1 ou 2 (pas de triple bull) ; sinon num×mult
+      let mult = state.mult;
+      if (num === 0) mult = 0;
+      else if (+b.dataset.bull === 1) mult = state.mult >= 2 ? 2 : 1;
+      const cmd = state.target === 'add' ? 'manual_throw' : 'correct_last';
+      ws.send(cmd, { number: num, multiplier: mult });
+      window.DartApp.showToast?.(
+        (state.target === 'add' ? 'Ajouté : ' : 'Corrigé : ') +
+        (num === 0 ? 'MISS' : (num === 25 ? (mult === 2 ? 'D-BULL' : 'BULL')
+          : ['', 'S', 'D', 'T'][mult] + num)));
+      close();
+    }));
+  }
+
   // ─── Branchement des boutons d'action ──────────────────────────────
   function setupActions() {
     $('#undoBtn')?.addEventListener('click', () => ws.send('undo_throw'));
+    // MISS : corrige le dernier tir en raté (0 pt) — cas "ça a scoré mais c'était à côté"
+    $('#missBtn')?.addEventListener('click', () => {
+      ws.send('correct_last', { number: 0, multiplier: 0 });
+      window.DartApp.showToast?.('Dernier tir → MISS');
+    });
+    // Corriger : ouvre le pavé de saisie manuelle
+    $('#correctBtn')?.addEventListener('click', openScoreKeypad);
     $('#nextBtn')?.addEventListener('click', () => ws.send('next_turn'));
     $('#menuBtn')?.addEventListener('click', () =>
       document.body.classList.add('state-menu'));

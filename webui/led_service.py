@@ -176,8 +176,15 @@ def handle(event_type, payload):
         pulse((255, 0, 0), times=3)                    # bust → triple pulse rouge
     elif event_type == "game_over":
         celebrate(4.0)                                 # victoire → arc-en-ciel
+    elif event_type == "takeout_start":
+        # Fin de tour : ATTENDS (ambre fixe). Retire tes fléchettes,
+        # le système recapture la référence. Ne lance pas encore.
+        solid((255, 100, 0), SAFE_MAX_BRIGHTNESS)
+    elif event_type == "takeout_end":
+        # PRÊT : flash vert → blanc. Au joueur suivant de lancer.
+        flash((0, 255, 0), hold=0.35)                  # flash() finit sur ambient() = blanc
     elif event_type in ("player_change", "turn_end"):
-        wipe((80, 120, 255), dur=0.5)                  # nouveau joueur → balayage bleu
+        pass                                           # transition signalée par takeout_start/end
     elif event_type == "test":
         demo()                                         # bouton "Test LEDs"
 
