@@ -515,16 +515,98 @@
     }
 
     let dbgMode = 'debug';   // "debug" (avec overlays) ou "clean" (flux brut warpé)
-    let watchdogTimer = null;
+
+    // ── Lecteur de flux MJPEG via fetch streaming ──────────────────────
+    // Un <img src="….mjpeg"> est une boîte noire : si la connexion meurt ou
+    // s'affame (hotspot dans la poche du joueur qui marche vers le board…),
+    // l'image reste figée SANS événement et ne revient jamais. Ici on lit
+    // les octets nous-mêmes : silence > 6s → reconnexion automatique.
+    function feedUrl(slot) {
+      return `/api/cam/${slot}/${dbgMode === 'debug' ? 'debug.mjpeg' : 'mjpeg'}?t=${Date.now()}`;
+    }
+
+    function findSeq(buf, b1, b2, from) {
+      for (let k = from; k < buf.length - 1; k++) {
+        if (buf[k] === b1 && buf[k + 1] === b2) return k;
+      }
+      return -1;
+    }
+
+    function attachStream(img) {
+      const slot = img.dataset.gdbgSlot;
+      let aborter = null;
+      let stopped = false;
+      let lastFrame = Date.now();
+
+      async function readLoop() {
+        while (!stopped && document.contains(img)) {
+          aborter = new AbortController();
+          try {
+            const resp = await fetch(feedUrl(slot), { signal: aborter.signal });
+            const reader = resp.body.getReader();
+            let buf = new Uint8Array(0);
+            lastFrame = Date.now();
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done || stopped) break;
+              const nb = new Uint8Array(buf.length + value.length);
+              nb.set(buf); nb.set(value, buf.length); buf = nb;
+              // Extrait chaque JPEG complet (SOI FFD8 … EOI FFD9)
+              for (;;) {
+                const soi = findSeq(buf, 0xFF, 0xD8, 0);
+                if (soi === -1) { buf = new Uint8Array(0); break; }
+                const eoi = findSeq(buf, 0xFF, 0xD9, soi + 2);
+                if (eoi === -1) { if (soi > 0) buf = buf.slice(soi); break; }
+                const jpg = buf.slice(soi, eoi + 2);
+                buf = buf.slice(eoi + 2);
+                const url = URL.createObjectURL(new Blob([jpg], { type: 'image/jpeg' }));
+                const old = img.dataset.blobUrl;
+                img.src = url;
+                img.dataset.blobUrl = url;
+                if (old) URL.revokeObjectURL(old);
+                lastFrame = Date.now();
+              }
+              if (buf.length > 4000000) buf = new Uint8Array(0); // garde-fou
+            }
+          } catch (e) { /* coupé/aborté → on retentera */ }
+          if (!stopped) await new Promise(r => setTimeout(r, 1500));
+        }
+      }
+
+      // Watchdog stall : aucune frame depuis 6s → abort → readLoop reconnecte
+      const wd = setInterval(() => {
+        if (stopped || !document.contains(img)) {
+          clearInterval(wd);
+          return;
+        }
+        if (Date.now() - lastFrame > 6000) aborter?.abort();
+      }, 2000);
+
+      readLoop();
+      return () => {
+        stopped = true;
+        aborter?.abort();
+        clearInterval(wd);
+        if (img.dataset.blobUrl) URL.revokeObjectURL(img.dataset.blobUrl);
+      };
+    }
+
+    let streamStops = [];
+    function startStreams() {
+      stopStreams();
+      $$('#gdbg-grid img[data-gdbg-slot]').forEach(img => {
+        streamStops.push(attachStream(img));
+      });
+    }
+    function stopStreams() {
+      streamStops.forEach(stop => stop());
+      streamStops = [];
+    }
 
     function toggleOverlay() {
       const existing = document.getElementById('gdbg-overlay');
       if (existing) {
-        if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
-        // Couper explicitement les flux MJPEG AVANT de retirer du DOM :
-        // sinon le navigateur garde les connexions ouvertes et on sature la
-        // limite de 6 connexions/hôte → la réouverture met des plombes.
-        existing.querySelectorAll('img').forEach(img => { img.src = ''; });
+        stopStreams();
         existing.remove();
         $('#gdbgToggleBtn')?.classList.remove('is-on');
         return;
@@ -537,7 +619,6 @@
       const overlay = document.createElement('div');
       overlay.className = 'gdbg-overlay';
       overlay.id = 'gdbg-overlay';
-      const ts = Date.now();
       overlay.innerHTML = `
         <div class="gdbg-head">
           <span class="gdbg-head__title">🐛 Debug cams</span>
@@ -552,9 +633,7 @@
             <div class="gdbg-feed">
               <div class="gdbg-feed__label">CAM ${slot}</div>
               <div class="gdbg-feed__img">
-                <img data-gdbg-slot="${slot}"
-                     src="/api/cam/${slot}/${dbgMode === 'debug' ? 'debug.mjpeg' : 'mjpeg'}?t=${ts}"
-                     alt="Cam ${slot}">
+                <img data-gdbg-slot="${slot}" alt="Cam ${slot}">
               </div>
             </div>
           `).join('')}
@@ -565,42 +644,10 @@
       $('#gdbg-close').addEventListener('click', toggleOverlay);
       $('#gdbg-mode-debug').addEventListener('click', () => setMode('debug'));
       $('#gdbg-mode-clean').addEventListener('click', () => setMode('clean'));
-
-      // Récupération des flux : sur le hotspot, un stream MJPEG peut mourir
-      // (ERR_INCOMPLETE_CHUNKED_ENCODING) — l'<img> reste alors figée/morte.
-      // On retry avec un léger backoff tant que l'overlay est ouvert.
-      $$('#gdbg-grid img[data-gdbg-slot]').forEach(img => {
-        img.addEventListener('error', () => {
-          if (img._retryTimer) return;
-          img._retryTimer = setTimeout(() => {
-            img._retryTimer = null;
-            if (!document.getElementById('gdbg-overlay')) return;
-            const slot = img.dataset.gdbgSlot;
-            img.src = `/api/cam/${slot}/${dbgMode === 'debug' ? 'debug.mjpeg' : 'mjpeg'}?t=${Date.now()}`;
-          }, 2000);
-        });
-      });
-
-      // Watchdog : un flux peut ne JAMAIS livrer de frame sans déclencher
-      // 'error' (connexion établie mais affamée → panel noir). Toutes les
-      // 4s, on relance les imgs qui n'ont toujours rien affiché.
-      watchdogTimer = setInterval(() => {
-        $$('#gdbg-grid img[data-gdbg-slot]').forEach(img => {
-          if (img.naturalWidth === 0 && img.src) {
-            const slot = img.dataset.gdbgSlot;
-            img.src = `/api/cam/${slot}/${dbgMode === 'debug' ? 'debug.mjpeg' : 'mjpeg'}?t=${Date.now()}`;
-          }
-        });
-      }, 4000);
+      startStreams();
 
       document.addEventListener('keydown', escClose);
     }
-
-    // Le réseau est revenu (la WS s'est reconnectée) : on relance les flux
-    // de l'overlay s'il est ouvert — ils sont probablement morts du même blip.
-    ws.on('_status', ({ connected }) => {
-      if (connected && document.getElementById('gdbg-overlay')) setMode(dbgMode);
-    });
 
     function escClose(e) {
       if (e.key === 'Escape' && document.getElementById('gdbg-overlay')) {
@@ -613,11 +660,7 @@
       dbgMode = mode;
       $('#gdbg-mode-debug')?.classList.toggle('is-active', mode === 'debug');
       $('#gdbg-mode-clean')?.classList.toggle('is-active', mode === 'clean');
-      const ts = Date.now();
-      $$('#gdbg-grid img[data-gdbg-slot]').forEach(img => {
-        const slot = img.dataset.gdbgSlot;
-        img.src = `/api/cam/${slot}/${mode === 'debug' ? 'debug.mjpeg' : 'mjpeg'}?t=${ts}`;
-      });
+      startStreams();   // relance les lecteurs sur le nouvel endpoint
     }
 
     // L'actions bar peut être rendu dynamiquement par game.js après load.

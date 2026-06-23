@@ -34,6 +34,9 @@ class DartDetector:
         # Cycles de confirmation improductifs consécutifs (diff persistant
         # mais aucun candidat valide) → auto-recapture de référence
         self._unproductive_cycles = 0
+        # Motion inter-frame de la dernière frame traitée (lu par main.py
+        # pour différer la synchro post-lancer si un bras est dans le champ)
+        self.last_motion = 0
         # Direction estimée board→caméra (vecteur unitaire), apprise sur les
         # détections dont le profil de largeur est non-ambigu : le flight se
         # projette à l'opposé de la cam, donc flight→pointe pointe vers elle.
@@ -159,6 +162,7 @@ class DartDetector:
             motion = cv2.countNonZero(cv2.bitwise_and(ft, board_mask))
         self.prev_gray = gray.copy()
         result["motion"] = motion
+        self.last_motion = motion
 
         # State machine
         if self.state == "takeout":

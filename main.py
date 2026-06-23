@@ -177,6 +177,9 @@ class DartVision:
         # Compteur de frames noires consécutives par cam (cam branchée mais
         # image inutilisable — exposition/USB). Voir boucle run().
         self._cam_black: list = []
+        # Confirmations post-lancer différées : {cam_idx: frames restantes}.
+        # Voir _post_throw_sync / _drain_pending_confirms.
+        self._pending_confirm: dict = {}
 
     # -----------------------------------------------------------------
     # INIT
@@ -496,6 +499,7 @@ class DartVision:
     def capture_reference(self):
         print("\n[REF] Capturing reference (board must be empty)...")
         self._takeout = None   # toute capture manuelle sort du mode takeout
+        self._pending_confirm.clear()
         time.sleep(0.3)
         for i, cap in enumerate(self.caps):
             # Flush minimal : BUFFERSIZE=1 côté V4L2, 4 lectures suffisent.
@@ -527,6 +531,7 @@ class DartVision:
         if self._takeout is not None:
             return
         self._takeout = {"since": time.time(), "activity": False, "stable": 0}
+        self._pending_confirm.clear()
         for det in self.detectors:
             det.enter_takeout()
         self.fusion.pending.clear()
@@ -574,21 +579,50 @@ class DartVision:
         confirm_detection() remet la référence de CHAQUE cam à la frame
         courante (fléchette incluse) + petit cooldown. Les cams retardataires
         ne verront donc plus la fléchette comme un nouveau diff.
+
+        Subtilité : si une cam voit du MOUVEMENT à cet instant (le bras du
+        lanceur encore dans SON champ), confirmer maintenant figerait le bras
+        dans sa référence — et son départ "révélerait" la fléchette qu'il
+        occultait → re-score (vu en prod : S15 scoré 2× à 4s d'écart). On
+        diffère la confirmation jusqu'au calme sur cette cam.
         """
-        for det, warped in zip(self.detectors, warped_frames):
+        for i, (det, warped) in enumerate(zip(self.detectors, warped_frames)):
             if warped is None or det.state == "takeout":
                 continue
-            det.confirm_detection(warped)
             det.state = "idle"
             det.stable_count = 0
             det.cooldown = max(det.cooldown, 10)
+            if det.last_motion > 1200:
+                self._pending_confirm[i] = 150   # ~5s max, confirme au calme
+            else:
+                det.confirm_detection(warped)
+                self._pending_confirm.pop(i, None)
         self.fusion.pending.clear()
+
+    def _drain_pending_confirms(self, warped_frames):
+        """Confirme les cams dont la synchro post-lancer a été différée
+        (bras dans le champ au moment du score), dès que le calme revient."""
+        for i in list(self._pending_confirm):
+            det = self.detectors[i] if i < len(self.detectors) else None
+            warped = warped_frames[i] if i < len(warped_frames) else None
+            if det is None or warped is None or det.state == "takeout":
+                self._pending_confirm.pop(i, None)
+                continue
+            self._pending_confirm[i] -= 1
+            if det.last_motion < 800 or self._pending_confirm[i] <= 0:
+                det.confirm_detection(warped)
+                det.state = "idle"
+                det.stable_count = 0
+                det.cooldown = max(det.cooldown, 5)
+                self._pending_confirm.pop(i, None)
 
     def process_frame_cycle(self, warped_frames):
         """Run detection on all cameras, feed into fusion, return result."""
         if self._takeout is not None:
             self._process_takeout(warped_frames)
             return None
+        if self._pending_confirm:
+            self._drain_pending_confirms(warped_frames)
         for i, (warped, det) in enumerate(zip(warped_frames, self.detectors)):
             if warped is None:
                 continue

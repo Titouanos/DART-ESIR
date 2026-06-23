@@ -145,7 +145,7 @@ FUSION_WINDOW_MS = 1200
 # scoré est ignorée quelques secondes : empêche les cams retardataires de
 # re-scorer LA MÊME fléchette en "single" (vu en prod : 1 dart → 3 throws).
 FUSION_SUPPRESS_DIST = 50
-FUSION_SUPPRESS_S = 3.0
+FUSION_SUPPRESS_S = 6.0   # 3.0 laissait passer un re-score à 4s (cam lente)
 
 # Validation géométrique de l'intersection des rays. Sans ces gardes, les
 # moindres carrés sortent TOUJOURS un point, même quand les rays sont

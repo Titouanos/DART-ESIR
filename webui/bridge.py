@@ -287,13 +287,19 @@ class Bridge:
                 return {"ok": True}
 
             if cmd == "reset_game":
-                # Mêmes joueurs/mode, scores remis à zéro.
+                # Mêmes joueurs/mode, scores remis à zéro. Le joueur va
+                # retirer ses fléchettes du board → takeout pour que le
+                # retrait ne soit pas scoré dans la nouvelle partie.
                 self._game.reset()
+                if self._controller is not None:
+                    self._controller.start_takeout()
                 return {"ok": True}
 
             if cmd == "quit_game":
                 # Reset minimal + tag d'état pour passer en "setup" (game.html → setup.html).
                 self._game.reset()
+                if self._controller is not None:
+                    self._controller.start_takeout()
                 return {"ok": True}
 
             if cmd == "capture_reference":
