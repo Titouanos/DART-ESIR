@@ -243,6 +243,10 @@
     const modeEl = $('.playhead__mode');
     if (modeEl) modeEl.textContent = `${snap.mode.toUpperCase()} · Leg ${snap.leg?.current || 1}/${snap.leg?.total || 1}`;
 
+    // Indicateur de tour bien visible à gauche (gros libellé)
+    const capEl = $('.playhead__left .caption');
+    if (capEl) capEl.textContent = `TOUR N° ${snap.turn_number || 1}`;
+
     const tabs = $('.jtabs');
     if (tabs) {
       // Remplace les tabs existants par autant que de joueurs
@@ -334,8 +338,9 @@
     $('#menuBtn')?.addEventListener('click', () =>
       document.body.classList.add('state-menu'));
 
-    // Menu modal : actions par index dans l'ordre du HTML
-    // [0] Reset partie · [1] Recalibrer · [2] Capturer ref · [3] Quitter
+    // Menu modal : les 3 premières actions sont liées par index (ordre HTML) :
+    // [0] Reset partie · [1] Recalibrer · [2] Capturer ref.
+    // Test LEDs et Quitter sont liés par id (robuste si l'ordre change).
     const actions = $$('.modal__action');
     if (actions[0]) actions[0].addEventListener('click', () => {
       ws.send('reset_game');
@@ -357,7 +362,12 @@
       ws.send('capture_reference');
       document.body.classList.remove('state-menu');
     });
-    if (actions[3]) actions[3].addEventListener('click', () => {
+    $('#testLedsBtn')?.addEventListener('click', () => {
+      ws.send('test_leds');
+      window.DartApp.showToast?.('Test LEDs lancé 🔆');
+      document.body.classList.remove('state-menu');
+    });
+    $('#quitGameBtn')?.addEventListener('click', () => {
       ws.send('quit_game');
       window.location.href = '/setup';
     });

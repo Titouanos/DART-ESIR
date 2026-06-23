@@ -525,6 +525,19 @@ class DartVision:
         double-avancer si l'utilisateur clique 'joueur suivant' à ce moment."""
         return self._takeout is not None
 
+    def cancel_takeout(self):
+        """Annule un takeout en cours et remet la détection live tout de suite.
+        Appelé sur reset/quit : le joueur veut rejouer immédiatement, pas
+        attendre la fin du cycle de retrait."""
+        if self._takeout is not None:
+            print("[TAKEOUT] annulé (reset/quit) — détection live")
+        self._takeout = None
+        self._pending_confirm.clear()
+        for det in self.detectors:
+            if det.state == "takeout":
+                det.state = "idle"
+                det.stable_count = 0
+
     def start_takeout(self):
         """Fin de tour : suspend la détection jusqu'au retrait des fléchettes.
 

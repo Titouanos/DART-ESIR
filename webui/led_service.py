@@ -163,6 +163,12 @@ def effect_for_throw(payload):
         flash((120, 160, 255), hold=0.2)               # simple → bleu doux
 
 
+def demo():
+    """Démo déclenchée par le bouton 'Test LEDs' : R, V, B, blanc + arc-en-ciel."""
+    self_test()
+    celebrate(2.5)
+
+
 def handle(event_type, payload):
     if event_type == "throw":
         effect_for_throw(payload)
@@ -172,6 +178,8 @@ def handle(event_type, payload):
         celebrate(4.0)                                 # victoire → arc-en-ciel
     elif event_type in ("player_change", "turn_end"):
         wipe((80, 120, 255), dur=0.5)                  # nouveau joueur → balayage bleu
+    elif event_type == "test":
+        demo()                                         # bouton "Test LEDs"
 
 
 def main():

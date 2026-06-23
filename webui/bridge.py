@@ -44,6 +44,7 @@ class Controller(Protocol):
     def reload_calibration(self) -> bool: ...
     def start_takeout(self) -> None: ...
     def is_in_takeout(self) -> bool: ...
+    def cancel_takeout(self) -> None: ...
 
 
 # Throttling minimum entre deux pushes `system_status` quand seules
@@ -304,6 +305,11 @@ class Bridge:
                 ok = self._game.undo_last_throw()
                 return {"ok": ok, "msg": None if ok else "Rien à annuler"}
 
+            if cmd == "test_leds":
+                # Déclenche une démo sur le ruban (service LED séparé, UDP).
+                self._emit_led("test", {})
+                return {"ok": True, "msg": "Test LEDs lancé"}
+
             if cmd == "next_turn":
                 # Garde anti double-avance : si un tour vient de se terminer
                 # tout seul (3 fléchettes) on est déjà en takeout. Re-cliquer
@@ -322,19 +328,20 @@ class Bridge:
                 return {"ok": True}
 
             if cmd == "reset_game":
-                # Mêmes joueurs/mode, scores remis à zéro. Le joueur va
-                # retirer ses fléchettes du board → takeout pour que le
-                # retrait ne soit pas scoré dans la nouvelle partie.
+                # Mêmes joueurs/mode, scores remis à zéro. PAS de takeout ici :
+                # le joueur veut rejouer tout de suite. On annule au contraire
+                # tout takeout en cours pour que la détection soit live
+                # immédiatement (sinon le 1er lancer d'après reset était mangé).
                 self._game.reset()
                 if self._controller is not None:
-                    self._controller.start_takeout()
+                    self._controller.cancel_takeout()
                 return {"ok": True}
 
             if cmd == "quit_game":
                 # Reset minimal + tag d'état pour passer en "setup" (game.html → setup.html).
                 self._game.reset()
                 if self._controller is not None:
-                    self._controller.start_takeout()
+                    self._controller.cancel_takeout()
                 return {"ok": True}
 
             if cmd == "capture_reference":
