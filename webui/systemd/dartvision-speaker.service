@@ -1,0 +1,15 @@
+[Unit]
+Description=DartVision — connexion auto de l'enceinte Bluetooth + sink par défaut
+# Indépendant de dartvision.service (pas de cycle de dépendances, cf service LED).
+# Démarre après que le Bluetooth système soit prêt ; PipeWire/WirePlumber sont
+# des services --user déjà actifs dans la session. La boucle de réessais du
+# script absorbe le reste du délai de mise en route.
+After=bluetooth.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/rt/DART-ESIR-new/webui/scripts/bt-speaker-connect.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

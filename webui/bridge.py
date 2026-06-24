@@ -78,11 +78,11 @@ class Bridge:
         self._last_status_push: float = 0.0
         self._last_status_bools: Dict[str, Any] = {}
 
-        # Miroir UDP des events de jeu → service LED (process séparé, python3
-        # système avec blinka). Fire-and-forget : sendto ne bloque jamais et
-        # n'échoue pas s'il n'y a aucun listener. Zéro impact sur le jeu si le
-        # service LED est absent/planté.
-        self._led_addr = ("127.0.0.1", 9876)
+        # Miroir UDP des events de jeu → services périphériques découplés
+        # (LEDs :9876, annonce vocale :9877). Fire-and-forget : sendto ne
+        # bloque jamais et n'échoue pas sans listener. Zéro impact sur le jeu
+        # si un service est absent/planté.
+        self._event_addrs = [("127.0.0.1", 9876), ("127.0.0.1", 9877)]
         try:
             self._led_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         except Exception:
@@ -137,14 +137,16 @@ class Bridge:
         self._emit_led(event_type, payload or {})
 
     def _emit_led(self, event_type: str, payload: dict) -> None:
-        """Envoie l'event en UDP au service LED. Best-effort, jamais bloquant."""
+        """Envoie l'event en UDP aux services périphériques (LED + audio).
+        Best-effort, jamais bloquant."""
         sock = getattr(self, "_led_sock", None)
         if sock is None:
             return
         try:
             msg = json.dumps({"type": event_type, "payload": payload},
                              separators=(",", ":"), default=str).encode("utf-8")
-            sock.sendto(msg, self._led_addr)
+            for addr in self._event_addrs:
+                sock.sendto(msg, addr)
         except Exception:
             pass  # pas de listener / erreur réseau → on ignore
 
@@ -323,6 +325,11 @@ class Bridge:
                 # Déclenche une démo sur le ruban (service LED séparé, UDP).
                 self._emit_led("test", {})
                 return {"ok": True, "msg": "Test LEDs lancé"}
+
+            if cmd == "test_audio":
+                # Déclenche une annonce de test (service vocal séparé, UDP).
+                self._emit_led("test_audio", {})
+                return {"ok": True, "msg": "Test audio lancé"}
 
             if cmd in ("manual_throw", "correct_last"):
                 if self._controller is None:
