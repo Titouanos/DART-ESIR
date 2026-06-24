@@ -78,6 +78,19 @@ def build_app(bridge: Bridge) -> FastAPI:
     """Construit l'app FastAPI. Le bridge est injecté pour partager l'état avec main.py."""
     app = FastAPI(title="DartVision Web", version="3.0.0")
 
+    # Anti-cache navigateur : pendant le dev/déploiement on pousse souvent de
+    # nouveaux game.js/html ; sans ça le navigateur sert l'ancienne version en
+    # cache et "les changements n'apparaissent pas" (boutons manquants, etc.).
+    # no-cache = revalidation à chaque requête (rapide en LAN via ETag/304).
+    @app.middleware("http")
+    async def _no_cache(request, call_next):
+        resp = await call_next(request)
+        path = request.url.path
+        if path.startswith("/static") or path in (
+                "/", "/setup", "/game", "/calibration", "/end"):
+            resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return resp
+
     # --- Pages HTML ------------------------------------------------------
     def _serve_page(name: str) -> FileResponse:
         path = _STATIC_DIR / _PAGES[name]
