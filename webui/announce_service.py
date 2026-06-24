@@ -25,9 +25,18 @@ import subprocess
 import sys
 import tempfile
 import os
+import time
+import queue
+import threading
 
 UDP_PORT = 9877
 WAV = os.path.join(tempfile.gettempdir(), "dart_announce.wav")
+
+# Events dont l'annonce ne doit JAMAIS être sautée pour cause de retard.
+PRIORITY_EVENTS = {"bust", "game_over", "player_change", "test_audio"}
+# Une annonce de lancer plus vieille que ça (= la voix a pris du retard sur le
+# jeu) est sautée pour recoller à l'affichage plutôt que de débiter le passé.
+STALE_S = 4.0
 
 # Piper TTS (voix naturelle). Si le binaire/modèle sont absents → repli espeak.
 PIPER_BIN = "/home/rt/piper-tts/piper/piper"
@@ -81,40 +90,96 @@ def say(text):
         print(f"[ANNOUNCE] échec '{text}': {e}", flush=True)
 
 
-def handle(event_type, p):
+def phrase_for(event_type, p):
+    """Phrase à dire pour un event de jeu, ou None si rien à annoncer."""
     if event_type == "throw":
         # bust géré par l'event bust ; ici on annonce juste le segment touché
-        say(seg_phrase(p))
-    elif event_type == "bust":
-        say(f"{p.get('player','')}, bust, zéro point")
-    elif event_type == "turn_end":
-        if not p.get("busted"):
-            say(f"{p.get('player','')}, {p.get('total', 0)} points")
-    elif event_type == "player_change":
-        say(f"{p.get('name','')}, à toi de jouer")
-    elif event_type == "game_over":
-        say(f"{p.get('winner_name','')} remporte la partie ! Bravo !")
-    elif event_type == "test_audio":
-        say("Test de l'annonce vocale. Le son fonctionne.")
+        return seg_phrase(p)
+    if event_type == "bust":
+        return f"{p.get('player','')}, bust, zéro point"
+    if event_type == "turn_end":
+        return None if p.get("busted") else f"{p.get('player','')}, {p.get('total', 0)} points"
+    if event_type == "player_change":
+        return f"{p.get('name','')}, à toi de jouer"
+    if event_type == "game_over":
+        return f"{p.get('winner_name','')} remporte la partie ! Bravo !"
+    if event_type == "test_audio":
+        return "Test de l'annonce vocale. Le son fonctionne."
+    return None
+
+
+# File d'annonces alimentée par le thread récepteur, consommée par le thread
+# lecteur. Découpler la réception UDP de la lecture (bloquante : synth Piper +
+# paplay ≈ 2-3 s) évite que les events s'empilent dans le buffer du socket et
+# que la voix débite le jeu avec plusieurs secondes de retard.
+_announce_q: "queue.Queue" = queue.Queue()
+# Vrai entre un game_over et le game_reset suivant : on n'annonce plus les
+# events de jeu résiduels (la voix doit s'arrêter à la fin de la partie).
+_game_over = threading.Event()
+
+
+def _drain(q):
+    """Vide la file sans bloquer."""
+    try:
+        while True:
+            q.get_nowait()
+    except queue.Empty:
+        pass
+
+
+def _player_loop():
+    """Consomme la file et joue les annonces, une à la fois."""
+    while True:
+        ts, event_type, p = _announce_q.get()
+        # Resynchro : si la voix a pris du retard, on saute les annonces de
+        # lancer/total périmées (un event plus récent attend déjà) pour
+        # recoller à l'affichage. Les events prioritaires sont toujours dits.
+        if event_type not in PRIORITY_EVENTS and (time.monotonic() - ts) > STALE_S:
+            continue
+        try:
+            say(phrase_for(event_type, p))
+        except Exception as e:
+            print(f"[ANNOUNCE] erreur lecture: {e}", flush=True)
 
 
 def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("127.0.0.1", UDP_PORT))
-    print(f"[ANNOUNCE] service démarré, écoute UDP :{UDP_PORT}", flush=True)
+    print(f"[ANNOUNCE] service démarré, écoute UDP :{UDP_PORT}"
+          f" (piper={'oui' if USE_PIPER else 'non, espeak'})", flush=True)
+
+    threading.Thread(target=_player_loop, daemon=True).start()
+
     if "--selftest" in sys.argv:
-        say("Test de l'annonce vocale. Le son fonctionne.")
+        _announce_q.put((time.monotonic(), "test_audio", {}))
+
     while True:
         try:
             data, _ = sock.recvfrom(8192)
             ev = json.loads(data.decode("utf-8"))
         except Exception:
             continue
-        try:
-            handle(ev.get("type"), ev.get("payload") or {})
-        except Exception as e:
-            print(f"[ANNOUNCE] erreur: {e}", flush=True)
+        event_type = ev.get("type")
+        p = ev.get("payload") or {}
+
+        if event_type == "game_reset":
+            # Nouvelle partie : on réautorise les annonces et on vide la file.
+            _game_over.clear()
+            _drain(_announce_q)
+            continue
+        if event_type == "game_over":
+            # Fin de partie : on jette tout ce qui attend (la voix ne doit pas
+            # continuer à débiter les lancers passés) et on n'annonce que le
+            # vainqueur. Les events de jeu suivants sont ignorés jusqu'au reset.
+            _drain(_announce_q)
+            _game_over.set()
+            _announce_q.put((time.monotonic(), event_type, p))
+            continue
+        if _game_over.is_set() and event_type != "test_audio":
+            continue
+
+        _announce_q.put((time.monotonic(), event_type, p))
 
 
 if __name__ == "__main__":
