@@ -43,6 +43,13 @@ class DartDetector:
         # Survit à reset() : la caméra ne bouge pas entre les parties.
         self.cam_bearing = None
 
+        # Objets réutilisés (ne dépendent que de constantes) : alloués une fois
+        # ici au lieu de l'être à chaque frame × chaque cam dans process_frame.
+        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        self._k_sm = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        self._k_md = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        self._board_mask = None  # construit paresseusement (taille frame connue)
+
     def set_reference(self, frame):
         self.reference = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         self.reference = cv2.GaussianBlur(self.reference, config.BLUR_KERNEL, 0)
@@ -95,8 +102,7 @@ class DartDetector:
     def process_frame(self, frame) -> dict:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         # Apply CLAHE to boost contrast of the darts against dark/light segments
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        gray = clahe.apply(gray)
+        gray = self._clahe.apply(gray)
         gray = cv2.GaussianBlur(gray, config.BLUR_KERNEL, 0)
 
         result = {
@@ -115,21 +121,22 @@ class DartDetector:
             result["state"] = "cooldown"
             return result
 
-        # Board mask
-        board_mask = np.zeros(gray.shape, dtype=np.uint8)
-        cv2.circle(board_mask, (config.WARP_CENTER, config.WARP_CENTER),
-                   int(config.WARP_RADIUS * 1.08), 255, -1)
+        # Board mask (même disque à chaque frame → calculé une fois, mémorisé)
+        if self._board_mask is None or self._board_mask.shape != gray.shape:
+            bm = np.zeros(gray.shape, dtype=np.uint8)
+            cv2.circle(bm, (config.WARP_CENTER, config.WARP_CENTER),
+                       int(config.WARP_RADIUS * 1.08), 255, -1)
+            self._board_mask = bm
+        board_mask = self._board_mask
 
         # Diff from reference
         diff = cv2.absdiff(gray, self.reference)
         diff = cv2.bitwise_and(diff, board_mask)
         _, thresh = cv2.threshold(diff, config.DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)
 
-        k_sm = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        k_md = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, k_sm, iterations=1)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, k_md, iterations=2)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, k_sm, iterations=1)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, self._k_sm, iterations=1)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, self._k_md, iterations=2)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, self._k_sm, iterations=1)
 
         self.debug_mask = thresh.copy()
         result["mask"] = thresh
@@ -230,8 +237,7 @@ class DartDetector:
     def confirm_detection(self, frame):
         """Called externally after fusion accepts this detection. Updates reference."""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        gray = clahe.apply(gray)
+        gray = self._clahe.apply(gray)
         gray = cv2.GaussianBlur(gray, config.BLUR_KERNEL, 0)
         self.reference = gray
 

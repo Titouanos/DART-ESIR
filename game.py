@@ -221,6 +221,16 @@ class GameEngine:
         Returns:
             dict with result info
         """
+        # Partie terminée : on ignore tout lancer résiduel (faux positif ou
+        # fléchette relancée avant le reset). Sans ça, en X01 le score du
+        # vainqueur (0) part en négatif → chemin "bust" → events throw/bust/
+        # turn_end fantômes et stats corrompues APRÈS la victoire.
+        if self.game_over:
+            noop = Throw(label="-", score=0, number=0, multiplier=0, ring="")
+            return {"player": self.current_player.name, "throw": noop,
+                    "bust": False, "turn_complete": False,
+                    "game_over": True, "winner": self.winner, "ignored": True}
+
         player = self.current_player
         player_pid = self.current_player_idx
         throw = Throw(

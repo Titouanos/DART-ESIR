@@ -931,6 +931,13 @@ class DartVision:
     # EVENT HANDLING
     # -----------------------------------------------------------------
     def _handle_detection(self, score_data):
+        # Partie terminée → on ignore (pas de score, pas de takeout, pas de LED).
+        # correct_last() lève game_over via undo avant de rejouer, donc une
+        # correction post-victoire reste possible.
+        if self.game.game_over:
+            print("  [IGNORE] partie terminée — lancer ignoré")
+            return
+
         self.last_score = score_data
         self.last_score_time = time.time()
 
