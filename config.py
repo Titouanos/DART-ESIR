@@ -61,6 +61,14 @@ MIN_DART_AREA = 80
 MAX_DART_AREA = 15000
 STABLE_FRAMES = 8
 COOLDOWN_FRAMES = 40
+
+# Dead-time GLOBAL après un lancer scoré : aucun nouveau lancer ne peut être
+# scoré pendant ce délai (toutes cams confondues). Laisse les détecteurs
+# absorber la fléchette dans leur référence et évite qu'un mouvement juste
+# après (bras qui se retire, joueur qui s'approche) soit pris pour un lancer.
+# Les fléchettes d'un même tour sont lancées à plusieurs secondes d'intervalle,
+# donc 1.5 s ne bloque pas le jeu normal.
+INTER_THROW_COOLDOWN_S = 1.5
 BLUR_KERNEL = (7, 7)
 MORPH_KERNEL_SIZE = 5
 
@@ -140,6 +148,14 @@ for _i, _num in enumerate(BOARD_ORDER):
 # When multiple cameras detect on the same frame cycle:
 # - If tips agree (< FUSION_AGREE_DIST px), average them weighted by confidence
 # - If tips disagree, take the one from the highest-confidence camera
+# Nombre MINIMUM de caméras distinctes qui doivent corroborer un lancer pour
+# qu'il soit scoré. À 2 (recommandé sur 3 cams) : un blob parasite vu par une
+# SEULE caméra (main qui retire une fléchette, ombre, trou laissé par une
+# pointe…) n'est plus scoré — il faut une vraie fléchette vue par ≥2 cams au
+# même endroit. Mettre à 1 si une cam est souvent occultée et que de vrais
+# lancers ne sont vus que par une seule (au prix du retour des faux positifs).
+FUSION_MIN_CAMS = 2
+
 FUSION_AGREE_DIST = 40        # Max px distance to consider "same dart"
 # 1200ms : les cams se stabilisent à des moments différents (STABLE_FRAMES
 # à des cadences effectives différentes). À 800ms la 2e cam arrivait souvent

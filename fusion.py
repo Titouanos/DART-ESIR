@@ -142,6 +142,18 @@ class FusionEngine:
         return result
 
     def _fuse_inner(self, detections) -> Optional[dict]:
+        # Corroboration multi-caméras : un lancer doit être vu par au moins
+        # FUSION_MIN_CAMS caméras DISTINCTES. Élimine la cause n°1 de faux
+        # scores — une seule cam qui voit un blob parasite (main au retrait,
+        # ombre, trou de pointe) et le score en "single" après le timeout de
+        # fusion. (FUSION_MIN_CAMS=1 rétablit l'ancien comportement.)
+        distinct_cams = len(set(d.cam_id for d in detections))
+        if distinct_cams < config.FUSION_MIN_CAMS:
+            tips = {d.cam_id: list(d.tip) for d in detections}
+            print(f"  [FUSION] REJET: {distinct_cams} cam(s) seulement "
+                  f"(min {config.FUSION_MIN_CAMS}) — tips={tips}")
+            return None
+
         if len(detections) == 1:
             d = detections[0]
             d.score_data["fusion_confidence"] = d.confidence

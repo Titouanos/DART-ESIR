@@ -671,6 +671,17 @@ class DartVision:
             return None
         if self._pending_confirm:
             self._drain_pending_confirms(warped_frames)
+
+        # Dead-time inter-lancer : juste après un score, on ne traite RIEN
+        # (les _pending_confirm ci-dessus ont déjà absorbé la fléchette dans
+        # les références). Évite qu'un mouvement immédiat (bras qui se retire,
+        # joueur qui s'approche) soit pris pour un lancer, et évite des
+        # détections fantômes qui pollueraient l'anti-doublon. Au retour, un
+        # éventuel pic de motion est rattrapé par la machine à états.
+        # Cf. config.INTER_THROW_COOLDOWN_S.
+        if time.time() - self.last_score_time < config.INTER_THROW_COOLDOWN_S:
+            return None
+
         for i, (warped, det) in enumerate(zip(warped_frames, self.detectors)):
             if warped is None:
                 continue
