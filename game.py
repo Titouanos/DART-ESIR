@@ -418,6 +418,16 @@ class GameEngine:
             ],
         }
 
+    def _recompute_score(self, player) -> None:
+        """Recalcule player.score depuis l'historique des tours, source de
+        vérité. Turn.total renvoie 0 pour un tour busté, donc un tour annulé
+        ne compte pas. Évite les dérives de l'ajustement incrémental."""
+        scored = sum(t.total for t in player.turns) + player.current_turn.total
+        if self.mode == "free":
+            player.score = scored
+        else:  # 301 / 501 : on décompte depuis le score de départ
+            player.score = player.start_score - scored
+
     def undo_last_throw(self) -> bool:
         """Undo the last registered throw. Returns True if successful.
 
@@ -448,19 +458,21 @@ class GameEngine:
         if not player.current_turn.throws:
             return False
 
-        throw = player.current_turn.throws.pop()
-
-        if self.mode == "free":
-            player.score -= throw.score
-        elif self.mode in ("501", "301"):
-            player.score += throw.score
+        player.current_turn.throws.pop()
 
         if self.history:
             self.history.pop()
 
+        # Retirer le lancer qui a fait sauter le tour réhabilite ce tour.
         player.current_turn.busted = False
         self.game_over = False
         self.winner = None
+
+        # Recalcule le score depuis l'historique des tours (source de vérité).
+        # L'ancien `score += throw.score` était FAUX après un bust : le tour
+        # busté n'avait rien soustrait (score déjà revenu au début du tour),
+        # donc rajouter le lancer gonflait le score (8 → 21 au lieu de 8).
+        self._recompute_score(player)
 
         # Notification : un undo peut toucher le current_player, la partie game_over,
         # les stats... le plus sûr est de demander un re-snapshot complet.
