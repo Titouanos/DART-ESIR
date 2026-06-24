@@ -415,12 +415,13 @@
   // ─── Branchement des boutons d'action ──────────────────────────────
   function setupActions() {
     $('#undoBtn')?.addEventListener('click', () => ws.send('undo_throw'));
-    // MISS : corrige le dernier tir en raté (0 pt) — cas "ça a scoré mais c'était à côté"
+    // MISS : AJOUTE un lancer raté (0 pt) pour la fléchette suivante —
+    // cas "elle est tombée / hors cible et n'a pas été détectée".
     $('#missBtn')?.addEventListener('click', () => {
-      ws.send('correct_last', { number: 0, multiplier: 0 });
-      window.DartApp.showToast?.('Dernier tir → MISS');
+      ws.send('manual_throw', { number: 0, multiplier: 0 });
+      window.DartApp.showToast?.('Lancer raté (MISS) ajouté');
     });
-    // Corriger : ouvre le pavé de saisie manuelle
+    // Corriger : ouvre le pavé pour réparer le DERNIER tir déjà détecté
     $('#correctBtn')?.addEventListener('click', openScoreKeypad);
     $('#nextBtn')?.addEventListener('click', () => ws.send('next_turn'));
     $('#menuBtn')?.addEventListener('click', () =>

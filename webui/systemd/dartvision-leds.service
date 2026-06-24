@@ -1,11 +1,13 @@
 [Unit]
 Description=DartVision — effets LED (WS2811/WS2812 via SPI, python3 systeme + blinka)
-After=dartvision.service
-Wants=dartvision.service
+# PAS de After/Wants sur dartvision.service : ça créait un cycle de
+# dépendances (systemd supprimait alors le démarrage de ce service). Le
+# service LED est indépendant — il écoute en UDP et ignore l'absence de jeu.
 
 [Service]
-# python3 SYSTEME (a blinka/neopixel_spi) — surtout PAS le venv
-ExecStart=/usr/bin/python3 /home/rt/DART-ESIR-new/webui/led_service.py
+# python3 SYSTEME (a blinka/neopixel_spi) — surtout PAS le venv.
+# -u : stdout non bufferise -> logs (demarrage, effets) visibles dans le journal.
+ExecStart=/usr/bin/python3 -u /home/rt/DART-ESIR-new/webui/led_service.py
 Restart=on-failure
 RestartSec=3
 

@@ -164,9 +164,16 @@ def effect_for_throw(payload):
 
 
 def demo():
-    """Démo déclenchée par le bouton 'Test LEDs' : R, V, B, blanc + arc-en-ciel."""
-    self_test()
-    celebrate(2.5)
+    """Démo 'Test LEDs' : séquence lente et bien visible R/V/B/blanc + arc-en-ciel.
+    Chaque couleur est tenue ~1.2s pour être indéniable."""
+    print("[LED] DEMO test_leds démarrée", flush=True)
+    for name, col in [("ROUGE", (255, 0, 0)), ("VERT", (0, 255, 0)),
+                      ("BLEU", (0, 0, 255)), ("BLANC", (255, 255, 255))]:
+        print(f"[LED] demo: {name}", flush=True)
+        ramp_to(col, SAFE_MAX_BRIGHTNESS, dur=0.25)
+        time.sleep(1.2)
+    celebrate(3.0)
+    print("[LED] DEMO terminée → ambiance blanche", flush=True)
 
 
 def handle(event_type, payload):
