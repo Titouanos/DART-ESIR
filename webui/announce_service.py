@@ -128,9 +128,6 @@ def phrase_for(event_type, p):
 # paplay ≈ 2-3 s) évite que les events s'empilent dans le buffer du socket et
 # que la voix débite le jeu avec plusieurs secondes de retard.
 _announce_q: "queue.Queue" = queue.Queue()
-# Vrai entre un game_over et le game_reset suivant : on n'annonce plus les
-# events de jeu résiduels (la voix doit s'arrêter à la fin de la partie).
-_game_over = threading.Event()
 # Nombre d'annonces de LANCER encore en file. Sert à coalescer : on ne saute un
 # lancer que si un lancer PLUS RÉCENT attend déjà (la voix a du retard) — le
 # dernier/seul lancer est toujours annoncé. Évite de perdre les scores quand
@@ -208,20 +205,16 @@ def main():
         if not _audio_enabled and event_type != "test_audio":
             continue
 
-        if event_type == "game_reset":
-            # Nouvelle partie : on réautorise les annonces et on vide la file.
-            _game_over.clear()
+        if event_type in ("game_reset", "game_over"):
+            # Fin/nouvelle partie : on jette le backlog (la voix ne doit pas
+            # continuer à débiter les lancers passés après la victoire). On
+            # n'arme PAS de mode "muet jusqu'au reset" : le garde-fou game_over
+            # de main.py empêche déjà tout lancer après une victoire, donc il
+            # n'y a pas d'event de jeu résiduel à filtrer — et ça évitait de
+            # rester muet sur la partie suivante si le reset n'arrivait pas.
             _drain(_announce_q)
-            continue
-        if event_type == "game_over":
-            # Fin de partie : on jette tout ce qui attend (la voix ne doit pas
-            # continuer à débiter les lancers passés) et on n'annonce que le
-            # vainqueur. Les events de jeu suivants sont ignorés jusqu'au reset.
-            _drain(_announce_q)
-            _game_over.set()
-            _announce_q.put((time.monotonic(), event_type, p))
-            continue
-        if _game_over.is_set() and event_type != "test_audio":
+            if event_type == "game_over":
+                _announce_q.put((time.monotonic(), event_type, p))
             continue
 
         if event_type == "throw":
