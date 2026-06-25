@@ -130,17 +130,6 @@
         c ? `<span class="pcard__chip">${esc(c)}</span>`
           : `<span class="pcard__chip pcard__chip--empty">···</span>`
       ).join('');
-      // Checkout : fléchettes pour finir (X01, score finissable). Affiché en
-      // évidence pour le joueur au tir, discret pour les autres.
-      const co = Array.isArray(p.checkout) ? p.checkout : [];
-      const finishHtml = co.length
-        ? `<div class="pcard__finish" style="margin-top:6px;font-weight:700;
-             letter-spacing:.3px;${p.active
-               ? 'color:#1fbf6b;font-size:1.02rem;'
-               : 'opacity:.6;font-size:.85rem;'}">
-             🎯 ${co.map(esc).join(' → ')}
-           </div>`
-        : '';
       article.innerHTML = `
         <div class="pcard__top">
           <span>${status} · AVG ${(p.avg_turn || 0).toFixed(1)}</span>
@@ -148,14 +137,35 @@
         </div>
         <div class="pcard__name">${esc(p.name)}</div>
         <div class="pcard__score">${p.score}</div>
-        ${finishHtml}
         <div class="pcard__bottom">
           ${chips}
           <span class="pcard__chk">CHK ${p.checkout_pct || 0}%</span>
         </div>
       `;
+      // Checkout : fléchettes pour finir (X01). Posé via applyFinish pour
+      // pouvoir le rafraîchir aussi à chaque lancer (pas qu'au changement de tour).
+      applyFinish(article, p.checkout, p.active);
       container.appendChild(article);
     });
+  }
+
+  // Pose / met à jour / retire la ligne "🎯 route de finition" d'une carte.
+  // Appelé au rendu complet ET sur chaque event throw (mise à jour par fléchette).
+  function applyFinish(card, checkout, active) {
+    if (!card) return;
+    const co = Array.isArray(checkout) ? checkout : [];
+    let el = card.querySelector('.pcard__finish');
+    if (!co.length) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'pcard__finish';
+      const score = card.querySelector('.pcard__score');
+      if (score) score.insertAdjacentElement('afterend', el);
+      else card.appendChild(el);
+    }
+    el.style.cssText = 'margin-top:6px;font-weight:700;letter-spacing:.3px;'
+      + (active ? 'color:#1fbf6b;font-size:1.02rem;' : 'opacity:.6;font-size:.85rem;');
+    el.innerHTML = '🎯 ' + co.map(esc).join(' → ');
   }
 
   // ─── Rendu matrix stats ────────────────────────────────────────────
@@ -569,6 +579,8 @@
           empties[0].textContent = p.label;
         }
       }
+      // Checkout rafraîchi APRÈS cette fléchette (le tireur est le joueur actif).
+      applyFinish(card, p.checkout, true);
     }
   });
   ws.on('bust',          showBust);

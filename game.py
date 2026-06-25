@@ -375,6 +375,10 @@ class GameEngine:
             "ring": throw.ring,
             "score": throw.score,
             "remaining": player.score,
+            # Checkout RECALCULÉ après ce lancer → l'UI rafraîchit la route de
+            # finition à chaque fléchette (et pas seulement au changement de
+            # tour). [] si hors X01 ou score non finissable.
+            "checkout": player.checkout_routes() if self.mode in self.X01_MODES else [],
             "fusion": score_data.get("fusion") or {
                 "cams": score_data.get("fusion_cams", []),
                 "confidence": score_data.get("fusion_confidence", 0.0),
