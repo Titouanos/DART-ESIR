@@ -159,7 +159,11 @@ class GameEngine:
     GameEngine, qu'on vienne du clavier OpenCV ou du WebSocket.
     """
 
-    MODES = ["free", "501", "301"]
+    MODES = ["free", "101", "301"]
+    # Modes "compte à rebours" (double-out). Centralisé pour ne pas semer des
+    # `in ("501","301")` partout : ajouter/retirer un format ne touche qu'ici.
+    X01_MODES = ("101", "301", "501")
+    _START_SCORES = {"101": 101, "301": 301, "501": 501}
 
     def __init__(self, mode: str = "free", player_names: List[str] = None):
         # Abonnés à instaurer AVANT toute mutation, pour pouvoir notifier
@@ -195,7 +199,7 @@ class GameEngine:
     def _init_state(self, mode: str, player_names: Optional[List[str]]) -> None:
         self.mode = mode if mode in self.MODES else "free"
         names = player_names or ["Player 1"]
-        start_score = 501 if self.mode == "501" else (301 if self.mode == "301" else 0)
+        start_score = self._START_SCORES.get(self.mode, 0)
         self.players = [Player(n, start_score) for n in names]
         self.current_player_idx = 0
         self.game_over = False
@@ -253,7 +257,7 @@ class GameEngine:
                     "darts_total": p.darts_total,
                     "turns": len(p.turns),
                     "current_throws": p.current_turn_chips(),
-                    "checkout": p.checkout_routes() if self.mode in ("501", "301") else [],
+                    "checkout": p.checkout_routes() if self.mode in self.X01_MODES else [],
                     "checkout_pct": p.checkout_pct,
                     "high_checkout": p.high_checkout,
                     "best_turn": p.best_turn,
@@ -297,7 +301,7 @@ class GameEngine:
         )
 
         # Le tour vient-il d'une tentative de checkout ? (X01 uniquement)
-        was_checkout_attempt = self.mode in ("501", "301") and player.score <= 170
+        was_checkout_attempt = self.mode in self.X01_MODES and player.score <= 170
 
         result = {
             "player": player.name,
@@ -316,7 +320,7 @@ class GameEngine:
                 result["turn_complete"] = True
 
         # --- X01 modes ---
-        elif self.mode in ("501", "301"):
+        elif self.mode in self.X01_MODES:
             new_score = player.score - throw.score
 
             # Bust check: can't go below 0, and must finish on a double
@@ -455,7 +459,7 @@ class GameEngine:
             # Score restant + route de checkout : permet l'annonce vocale du
             # finish et un éventuel affichage au changement de joueur.
             "score": nxt.score,
-            "checkout": nxt.checkout_routes() if self.mode in ("501", "301") else [],
+            "checkout": nxt.checkout_routes() if self.mode in self.X01_MODES else [],
         })
 
     def _build_game_over_payload(self) -> dict:
@@ -568,6 +572,6 @@ class GameEngine:
                 "avg": round(p.avg_per_turn, 1),
                 "turns": len(p.turns),
                 "active": i == self.current_player_idx,
-                "checkout": p.checkout_routes() if self.mode in ("501", "301") else [],
+                "checkout": p.checkout_routes() if self.mode in self.X01_MODES else [],
             })
         return board

@@ -11,7 +11,7 @@
 
   // ─── State local : ce qui sera envoyé au backend ───────────────────
   const state = {
-    mode: '501',                              // overridé par la carte active
+    mode: '101',                              // overridé par la carte active
     players: ['Titouan', 'Kévin', 'Paul'],    // synchronisé via renumber()
   };
   const MAX_PLAYERS = 8;
