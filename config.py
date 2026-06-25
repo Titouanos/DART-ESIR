@@ -156,16 +156,21 @@ for _i, _num in enumerate(BOARD_ORDER):
 # positifs si REQUIRE_CONFIRM est aussi désactivé).
 FUSION_MIN_CAMS = 2
 
-# Score "à confirmer" plutôt que jeté ou compté en aveugle. Un lancer vu par
-# moins de FUSION_MIN_CAMS caméras OU dont la confiance de fusion est sous ce
-# seuil n'est PAS scoré automatiquement : il est proposé à l'écran (1 clic pour
-# valider, sinon ignoré). Réconcilie "ne pas perdre un vrai lancer" et "ne pas
-# compter un parasite". Mettre REQUIRE_CONFIRM=False pour scorer quand même
-# automatiquement (ancien comportement, au risque de faux positifs).
-REQUIRE_CONFIRM = True
+# Mode "confirmation à l'écran" des lancers incertains.
+#  - False (défaut) : comportement simple et prévisible. Un lancer vu par
+#    ≥ FUSION_MIN_CAMS caméras est scoré + annoncé automatiquement ; un lancer
+#    vu par moins est rejeté silencieusement (pas de carte). C'est le réglage
+#    qui évite à la fois les faux scores entre les tours ET d'avoir à valider
+#    chaque vrai lancer à la main.
+#  - True : un lancer incertain (vu par < FUSION_MIN_CAMS cams, ou confiance
+#    < CONFIRM_BELOW_CONFIDENCE) n'est pas scoré tout seul mais proposé à
+#    l'écran (Valider/Ignorer). Plus sûr contre les fantômes, mais demande une
+#    action pour tout lancer un peu ambigu — vite pénible si la détection est
+#    souvent mono-caméra.
+REQUIRE_CONFIRM = False
 CONFIRM_BELOW_CONFIDENCE = 0.55
-# Si personne ne valide/rejette un lancer incertain dans ce délai, on l'auto-
-# rejette et la détection reprend (le lancer reste ajoutable à la main).
+# (Mode confirmation) Délai au bout duquel un lancer non validé/rejeté est
+# auto-rejeté et la détection reprend (le lancer reste ajoutable à la main).
 CONFIRM_TIMEOUT_S = 25.0
 
 FUSION_AGREE_DIST = 40        # Max px distance to consider "same dart"

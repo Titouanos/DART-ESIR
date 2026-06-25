@@ -134,22 +134,39 @@ class FusionEngine:
         self.last_fused_time = time.time()
 
         result = self._fuse_inner(detections)
-        if result is not None:
-            # Tips 2D par cam : diagnostic systématique de chaque score
-            result["fusion_tips"] = {d.cam_id: list(d.tip) for d in detections}
-            distinct_cams = len(set(d.cam_id for d in detections))
-            result["distinct_cams"] = distinct_cams
-            # Lancer "à confirmer" : vu par moins de FUSION_MIN_CAMS caméras
-            # distinctes, OU confiance de fusion trop basse. Le contrôleur ne
-            # le scorera pas automatiquement — il le proposera à l'écran. C'est
-            # le filet contre les faux scores (main au retrait, ombre, trou de
-            # pointe vus par une seule cam) SANS perdre un vrai lancer.
+        if result is None:
+            return None
+
+        distinct_cams = len(set(d.cam_id for d in detections))
+
+        # Corroboration multi-caméras. Un lancer vu par moins de FUSION_MIN_CAMS
+        # caméras distinctes est suspect (souvent un parasite : main au retrait,
+        # ombre, trou de pointe vu par une seule cam). Deux politiques :
+        #   - REQUIRE_CONFIRM=False (défaut) : on le REJETTE silencieusement.
+        #     Les vrais lancers (≥ FUSION_MIN_CAMS cams) sont scorés + annoncés
+        #     automatiquement ; un éventuel vrai lancer vu par 1 seule cam est
+        #     perdu (rattrapable à la main). Comportement simple et prévisible.
+        #   - REQUIRE_CONFIRM=True : on ne rejette pas, on TAGue needs_confirm
+        #     pour que le contrôleur le propose à l'écran (Valider/Ignorer).
+        if distinct_cams < config.FUSION_MIN_CAMS:
+            if not getattr(config, "REQUIRE_CONFIRM", False):
+                tips = {d.cam_id: list(d.tip) for d in detections}
+                print(f"  [FUSION] REJET: {distinct_cams} cam(s) seulement "
+                      f"(min {config.FUSION_MIN_CAMS}) — tips={tips}")
+                return None
+            result["needs_confirm"] = True
+        else:
+            # ≥ FUSION_MIN_CAMS cams : score auto, sauf confiance très basse si
+            # le mode confirmation est actif.
             result["needs_confirm"] = (
-                distinct_cams < config.FUSION_MIN_CAMS
-                or result.get("fusion_confidence", 1.0) < config.CONFIRM_BELOW_CONFIDENCE
+                getattr(config, "REQUIRE_CONFIRM", False)
+                and result.get("fusion_confidence", 1.0) < config.CONFIRM_BELOW_CONFIDENCE
             )
-            tx, ty = result["tip_px"]
-            self.recent_throws.append((float(tx), float(ty), time.time()))
+
+        result["distinct_cams"] = distinct_cams
+        result["fusion_tips"] = {d.cam_id: list(d.tip) for d in detections}
+        tx, ty = result["tip_px"]
+        self.recent_throws.append((float(tx), float(ty), time.time()))
         return result
 
     def _fuse_inner(self, detections) -> Optional[dict]:
