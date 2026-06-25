@@ -32,11 +32,8 @@ import threading
 UDP_PORT = 9877
 WAV = os.path.join(tempfile.gettempdir(), "dart_announce.wav")
 
-# Events dont l'annonce ne doit JAMAIS être sautée pour cause de retard.
+# Events dont l'annonce ne doit JAMAIS être sautée.
 PRIORITY_EVENTS = {"bust", "game_over", "player_change", "test_audio"}
-# Une annonce de lancer plus vieille que ça (= la voix a pris du retard sur le
-# jeu) est sautée pour recoller à l'affichage plutôt que de débiter le passé.
-STALE_S = 4.0
 
 # État voix, piloté par l'UI via l'event UDP audio_config (relayé par le bridge).
 _audio_enabled = True
@@ -134,26 +131,40 @@ _announce_q: "queue.Queue" = queue.Queue()
 # Vrai entre un game_over et le game_reset suivant : on n'annonce plus les
 # events de jeu résiduels (la voix doit s'arrêter à la fin de la partie).
 _game_over = threading.Event()
+# Nombre d'annonces de LANCER encore en file. Sert à coalescer : on ne saute un
+# lancer que si un lancer PLUS RÉCENT attend déjà (la voix a du retard) — le
+# dernier/seul lancer est toujours annoncé. Évite de perdre les scores quand
+# une annonce longue (checkout au changement de joueur) bloque la file.
+_throws_waiting = 0
+_tw_lock = threading.Lock()
 
 
 def _drain(q):
-    """Vide la file sans bloquer."""
+    """Vide la file sans bloquer (et resynchronise le compteur de lancers)."""
+    global _throws_waiting
     try:
         while True:
             q.get_nowait()
     except queue.Empty:
         pass
+    with _tw_lock:
+        _throws_waiting = 0
 
 
 def _player_loop():
     """Consomme la file et joue les annonces, une à la fois."""
+    global _throws_waiting
     while True:
         ts, event_type, p = _announce_q.get()
-        # Resynchro : si la voix a pris du retard, on saute les annonces de
-        # lancer/total périmées (un event plus récent attend déjà) pour
-        # recoller à l'affichage. Les events prioritaires sont toujours dits.
-        if event_type not in PRIORITY_EVENTS and (time.monotonic() - ts) > STALE_S:
-            continue
+        if event_type == "throw":
+            # Coalescence : si un lancer plus récent attend déjà, on saute
+            # celui-ci (la voix est en retard) ; sinon on l'annonce. Le dernier
+            # lancer passe donc toujours.
+            with _tw_lock:
+                _throws_waiting = max(0, _throws_waiting - 1)
+                superseded = _throws_waiting > 0
+            if superseded:
+                continue
         try:
             say(phrase_for(event_type, p))
         except Exception as e:
@@ -213,6 +224,9 @@ def main():
         if _game_over.is_set() and event_type != "test_audio":
             continue
 
+        if event_type == "throw":
+            with _tw_lock:
+                _throws_waiting += 1
         _announce_q.put((time.monotonic(), event_type, p))
 
 
