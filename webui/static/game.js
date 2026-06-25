@@ -163,6 +163,9 @@
     const grid = $('.matrix__grid');
     if (!grid) return;
     const players = snap.players;
+    // Colonnes = 1 libellé + N joueurs. Le CSS fixait 4 joueurs en dur → tableau
+    // décalé à 2/3 joueurs. On l'aligne dynamiquement sur le nombre réel.
+    grid.style.gridTemplateColumns = `1.4fr repeat(${players.length}, 1fr)`;
     // Lignes: header / Avg / 180/Ton+ / Checkout% / High checkout / Fléchettes·leg
     const rows = [
       { label: '',                  cells: players.map((p, i) => ({ pid: i, txt: `J.${i + 1}`, head: true })) },
