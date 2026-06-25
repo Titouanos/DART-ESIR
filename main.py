@@ -154,6 +154,14 @@ class DartVision:
         self.last_score = None
         self.last_score_time = 0
 
+        # Lancer détecté mais peu fiable, en attente de confirmation UI
+        # (cf. config.REQUIRE_CONFIRM). None = rien en attente.
+        self._pending_throw = None
+        self._pending_since = 0.0
+        # Demande de resynchro des références après une décision sur un lancer
+        # incertain (traitée dans la boucle de détection, qui a les frames).
+        self._resync_pending = False
+
         # Clickable buttons config: (label, x, y, w, h, key_equiv, color)
         self.buttons = []
 
@@ -532,6 +540,7 @@ class DartVision:
         if self._takeout is not None:
             print("[TAKEOUT] annulé (reset/quit) — détection live")
         self._takeout = None
+        self._clear_pending()
         self._pending_confirm.clear()
         for det in self.detectors:
             if det.state == "takeout":
@@ -555,6 +564,7 @@ class DartVision:
         if self._takeout is not None:
             return
         self._takeout = {"since": time.time(), "activity": False, "stable": 0}
+        self._clear_pending()
         self._pending_confirm.clear()
         for det in self.detectors:
             det.enter_takeout()
@@ -671,6 +681,25 @@ class DartVision:
             return None
         if self._pending_confirm:
             self._drain_pending_confirms(warped_frames)
+
+        # Suite à la décision (confirmer/rejeter) d'un lancer incertain, prise
+        # hors boucle (WS) : on absorbe l'état courant (fléchette plantée) dans
+        # les références ici, là où on a les frames. Sinon le même diff serait
+        # re-détecté en boucle.
+        if self._resync_pending:
+            self._resync_pending = False
+            self._post_throw_sync(warped_frames)
+            self.last_score_time = time.time()
+            return None
+
+        # Confirmation en attente : détection en pause jusqu'à la décision UI
+        # (filet de sécurité : auto-rejet après CONFIRM_TIMEOUT_S si oubli).
+        if self._pending_throw is not None:
+            timeout = getattr(config, "CONFIRM_TIMEOUT_S", 25.0)
+            if time.time() - self._pending_since > timeout:
+                print("  [CONFIRM] délai dépassé — auto-rejet du lancer incertain")
+                self.reject_pending()
+            return None
 
         # Dead-time inter-lancer : juste après un score, on ne traite RIEN
         # (les _pending_confirm ci-dessus ont déjà absorbé la fléchette dans
@@ -937,6 +966,70 @@ class DartVision:
         if self.game.game_over:
             print("  [IGNORE] partie terminée — lancer ignoré")
             return
+
+        # Lancer peu fiable → on NE score PAS automatiquement : on le met en
+        # attente et on le propose à l'écran (1 clic valide, sinon ignoré).
+        # Évite les faux scores (parasite vu par 1 cam) sans perdre un vrai
+        # lancer. Si une confirmation traîne déjà, la nouvelle la remplace.
+        if getattr(config, "REQUIRE_CONFIRM", False) and score_data.get("needs_confirm"):
+            self.last_score_time = time.time()   # alimente aussi le dead-time
+            self._pending_throw = score_data
+            self._pending_since = time.time()
+            cams = score_data.get("fusion_cams", [])
+            conf = score_data.get("fusion_confidence", 0)
+            print(f"  [CONFIRM?] {score_data.get('label')} "
+                  f"(cams {cams}, {conf:.0%}) — en attente de validation UI")
+            try:
+                self.bridge.notify_clients("pending_throw", {
+                    "label": score_data.get("label"),
+                    "score": score_data.get("score"),
+                    "number": score_data.get("number"),
+                    "multiplier": score_data.get("multiplier"),
+                    "ring": score_data.get("ring"),
+                    "cams": cams,
+                    "confidence": round(float(conf), 2),
+                })
+            except Exception:
+                pass
+            return
+
+        self._register_scored(score_data)
+
+    def _clear_pending(self, confirmed=False):
+        """Solde la confirmation en attente (s'il y en a une) et notifie l'UI.
+
+        Demande aussi une resynchro des références : la fléchette incertaine
+        est (peut-être) plantée sur le board ; on l'absorbe dans la référence
+        à la prochaine frame pour ne pas la re-détecter en boucle.
+        """
+        had = self._pending_throw is not None
+        self._pending_throw = None
+        if had:
+            self._resync_pending = True
+            try:
+                self.bridge.notify_clients("pending_cleared", {"confirmed": confirmed})
+            except Exception:
+                pass
+
+    def confirm_pending(self):
+        """Valide le lancer en attente (clic UI) → scoré normalement."""
+        sd = self._pending_throw
+        self._clear_pending(confirmed=True)
+        if sd is None:
+            return
+        print(f"  [CONFIRM] validé : {sd.get('label')}")
+        self._register_scored(sd)
+
+    def reject_pending(self):
+        """Rejette le lancer en attente (clic UI) → ignoré, rien de scoré."""
+        if self._pending_throw is not None:
+            print(f"  [CONFIRM] rejeté : {self._pending_throw.get('label')}")
+        self._clear_pending(confirmed=False)
+
+    def _register_scored(self, score_data):
+        """Enregistre effectivement un lancer (détection fiable ou confirmé)."""
+        # Un score effectif solde toute confirmation encore en attente.
+        self._clear_pending(confirmed=False)
 
         self.last_score = score_data
         self.last_score_time = time.time()

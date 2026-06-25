@@ -130,6 +130,17 @@
         c ? `<span class="pcard__chip">${esc(c)}</span>`
           : `<span class="pcard__chip pcard__chip--empty">···</span>`
       ).join('');
+      // Checkout : fléchettes pour finir (X01, score finissable). Affiché en
+      // évidence pour le joueur au tir, discret pour les autres.
+      const co = Array.isArray(p.checkout) ? p.checkout : [];
+      const finishHtml = co.length
+        ? `<div class="pcard__finish" style="margin-top:6px;font-weight:700;
+             letter-spacing:.3px;${p.active
+               ? 'color:#1fbf6b;font-size:1.02rem;'
+               : 'opacity:.6;font-size:.85rem;'}">
+             🎯 ${co.map(esc).join(' → ')}
+           </div>`
+        : '';
       article.innerHTML = `
         <div class="pcard__top">
           <span>${status} · AVG ${(p.avg_turn || 0).toFixed(1)}</span>
@@ -137,6 +148,7 @@
         </div>
         <div class="pcard__name">${esc(p.name)}</div>
         <div class="pcard__score">${p.score}</div>
+        ${finishHtml}
         <div class="pcard__bottom">
           ${chips}
           <span class="pcard__chk">CHK ${p.checkout_pct || 0}%</span>
@@ -331,6 +343,48 @@
     document.body.classList.add('state-win');
   }
 
+  // ─── Confirmation d'un lancer incertain (#4) ───────────────────────
+  // Affiché quand le backend détecte un lancer peu fiable (1 seule cam ou
+  // confiance basse) : l'utilisateur valide (= scoré) ou rejette (= ignoré).
+  function showPendingConfirm(p) {
+    if (!document.getElementById('pc-css')) {
+      const css = `
+        .pc-card{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);
+          z-index:5500;background:#1b1b22;color:#fff;border:2px solid #ffb020;
+          border-radius:14px;padding:14px 16px;min-width:min(92vw,420px);
+          box-shadow:0 16px 48px rgba(0,0,0,.5);text-align:center;}
+        .pc-title{font-size:.78rem;letter-spacing:1px;opacity:.7;text-transform:uppercase;}
+        .pc-score{font-size:2.1rem;font-weight:800;margin:4px 0;color:#ffb020;}
+        .pc-meta{font-size:.78rem;opacity:.6;margin-bottom:10px;}
+        .pc-row{display:flex;gap:10px;}
+        .pc-row button{flex:1;padding:12px;border:none;border-radius:10px;
+          cursor:pointer;font-weight:700;font-size:1rem;}
+        .pc-ok{background:#1fbf6b;color:#fff;}
+        .pc-no{background:#3a3a44;color:#fff;}`;
+      const s = document.createElement('style'); s.id = 'pc-css'; s.textContent = css;
+      document.head.appendChild(s);
+    }
+    hidePendingConfirm();
+    const card = document.createElement('div');
+    card.className = 'pc-card'; card.id = 'pc-card';
+    const cams = Array.isArray(p.cams) ? p.cams.join(',') : '?';
+    const conf = p.confidence != null ? Math.round(p.confidence * 100) + '%' : '?';
+    card.innerHTML = `
+      <div class="pc-title">Lancer à confirmer</div>
+      <div class="pc-score">${esc(p.label || '?')}${p.score != null ? ' · ' + p.score + ' pts' : ''}</div>
+      <div class="pc-meta">cams ${esc(String(cams))} · confiance ${esc(conf)}</div>
+      <div class="pc-row">
+        <button class="pc-ok" id="pc-ok">✓ Valider</button>
+        <button class="pc-no" id="pc-no">✕ Ignorer</button>
+      </div>`;
+    document.body.appendChild(card);
+    $('#pc-ok', card).addEventListener('click', () => ws.send('confirm_pending'));
+    $('#pc-no', card).addEventListener('click', () => ws.send('reject_pending'));
+  }
+  function hidePendingConfirm() {
+    document.getElementById('pc-card')?.remove();
+  }
+
   // ─── Pavé de saisie manuelle (correction / ajout de lancer) ─────────
   function openScoreKeypad() {
     if (document.getElementById('kp-overlay')) return;
@@ -456,6 +510,16 @@
       window.DartApp.showToast?.('Test LEDs lancé 🔆');
       document.body.classList.remove('state-menu');
     });
+    $('#testAudioBtn')?.addEventListener('click', () => {
+      ws.send('test_audio');
+      window.DartApp.showToast?.('Test voix lancé 🔊');
+    });
+    // Voix : activer/couper + volume. L'état réel est confirmé par l'event
+    // 'audio_state' (renvoyé par le bridge), qui met à jour le libellé.
+    $('#voiceToggleBtn')?.addEventListener('click', () => ws.send('toggle_audio'));
+    const volEl = $('#voiceVol');
+    if (volEl) volEl.addEventListener('change',
+      () => ws.send('set_volume', { level: +volEl.value }));
     $('#quitGameBtn')?.addEventListener('click', () => {
       ws.send('quit_game');
       window.location.href = '/setup';
@@ -508,6 +572,19 @@
   ws.on('game_over',     showWin);
   ws.on('turn_end',      () => { /* sera reflété au prochain snapshot */ });
   ws.on('player_change', () => { /* idem */ });
+
+  // Lancer incertain à confirmer (vu par 1 cam ou confiance basse).
+  ws.on('pending_throw',   showPendingConfirm);
+  ws.on('pending_cleared', hidePendingConfirm);
+
+  // État audio (voix on/off + volume) renvoyé par le bridge.
+  ws.on('audio_state', (p) => {
+    const lbl = $('#voiceToggleLabel'), ic = $('#voiceToggleIcon'), vol = $('#voiceVol');
+    const on = p.enabled !== false;
+    if (lbl) lbl.textContent = on ? 'Voix : activée' : 'Voix : coupée';
+    if (ic) ic.textContent = on ? '🔊' : '🔇';
+    if (vol && typeof p.volume === 'number') vol.value = p.volume;
+  });
 
   // À la reconnexion : si on a déjà reçu un snapshot, on le rejoue tout de
   // suite pour éviter le blank screen. L'app.js l'a stocké dans ws.lastSnapshot.

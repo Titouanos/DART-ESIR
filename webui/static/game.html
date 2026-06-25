@@ -345,6 +345,20 @@
           <span class="modal__icon">🔆</span>
           <span>Test LEDs</span>
         </button>
+        <button class="modal__action" id="testAudioBtn">
+          <span class="modal__icon">🔊</span>
+          <span>Test voix</span>
+        </button>
+        <button class="modal__action" id="voiceToggleBtn">
+          <span class="modal__icon" id="voiceToggleIcon">🔊</span>
+          <span id="voiceToggleLabel">Voix : activée</span>
+        </button>
+        <label class="modal__action" style="cursor:default;gap:10px;">
+          <span class="modal__icon">🎚️</span>
+          <span>Volume voix</span>
+          <input type="range" id="voiceVol" min="0" max="100" value="80"
+                 style="flex:1;margin-left:8px;">
+        </label>
         <button class="modal__action modal__action--danger" id="quitGameBtn">
           <span class="modal__icon">⏻</span>
           <span>Quitter la partie</span>

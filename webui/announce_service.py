@@ -38,6 +38,10 @@ PRIORITY_EVENTS = {"bust", "game_over", "player_change", "test_audio"}
 # jeu) est sautée pour recoller à l'affichage plutôt que de débiter le passé.
 STALE_S = 4.0
 
+# État voix, piloté par l'UI via l'event UDP audio_config (relayé par le bridge).
+_audio_enabled = True
+_audio_volume = 80   # 0..100, appliqué au volume linéaire paplay (0..65536)
+
 # Piper TTS (voix naturelle). Si le binaire/modèle sont absents → repli espeak.
 PIPER_BIN = "/home/rt/piper-tts/piper/piper"
 PIPER_MODEL = "/home/rt/piper-tts/voices/fr_FR-tom-medium.onnx"
@@ -83,11 +87,21 @@ def say(text):
     try:
         synth(text)
         # paplay (couche pulse) envoie vers le sink par défaut (= enceinte BT).
-        # check=True → un échec de lecture remonte dans le journal au lieu
-        # d'être avalé silencieusement (cas vécu avec pw-play).
-        subprocess.run(["paplay", WAV], check=True, timeout=15)
+        # --volume : 0..65536 (linéaire PA, 65536 = 100%). check=True → un échec
+        # de lecture remonte dans le journal (pas avalé comme avec pw-play).
+        vol = max(0, min(65536, int(_audio_volume / 100 * 65536)))
+        subprocess.run(["paplay", f"--volume={vol}", WAV], check=True, timeout=15)
     except Exception as e:
         print(f"[ANNOUNCE] échec '{text}': {e}", flush=True)
+
+
+def _label_speech(lbl):
+    """Label de fléchette ('T20','D16','BULL','S5') → texte FR pour la synthèse
+    (Piper/espeak lisent les nombres en français)."""
+    if lbl in ("BULL", "SB", "25"):
+        return "bull"
+    head = {"T": "triple ", "D": "double ", "S": ""}.get(lbl[0], "")
+    return head + lbl[1:]
 
 
 def phrase_for(event_type, p):
@@ -100,7 +114,11 @@ def phrase_for(event_type, p):
     if event_type == "turn_end":
         return None if p.get("busted") else f"{p.get('player','')}, {p.get('total', 0)} points"
     if event_type == "player_change":
-        return f"{p.get('name','')}, à toi de jouer"
+        base = f"{p.get('name','')}, à toi de jouer"
+        co = p.get("checkout") or []
+        if co:
+            return f"{base}. Pour finir : {', '.join(_label_speech(l) for l in co)}."
+        return base
     if event_type == "game_over":
         return f"{p.get('winner_name','')} remporte la partie ! Bravo !"
     if event_type == "test_audio":
@@ -162,6 +180,22 @@ def main():
             continue
         event_type = ev.get("type")
         p = ev.get("payload") or {}
+
+        if event_type == "audio_config":
+            # Réglage voix depuis l'UI (on/off + volume). Pris en compte par le
+            # thread lecteur (globals) ; pas mis en file.
+            global _audio_enabled, _audio_volume
+            if "enabled" in p:
+                _audio_enabled = bool(p["enabled"])
+            if "volume" in p:
+                _audio_volume = max(0, min(100, int(p["volume"])))
+            print(f"[ANNOUNCE] config: voix={'on' if _audio_enabled else 'off'}"
+                  f" volume={_audio_volume}", flush=True)
+            continue
+
+        # Voix coupée : on n'annonce rien (sauf test_audio, action explicite UI).
+        if not _audio_enabled and event_type != "test_audio":
+            continue
 
         if event_type == "game_reset":
             # Nouvelle partie : on réautorise les annonces et on vide la file.

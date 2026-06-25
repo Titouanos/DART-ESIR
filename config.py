@@ -148,13 +148,25 @@ for _i, _num in enumerate(BOARD_ORDER):
 # When multiple cameras detect on the same frame cycle:
 # - If tips agree (< FUSION_AGREE_DIST px), average them weighted by confidence
 # - If tips disagree, take the one from the highest-confidence camera
-# Nombre MINIMUM de caméras distinctes qui doivent corroborer un lancer pour
-# qu'il soit scoré. À 2 (recommandé sur 3 cams) : un blob parasite vu par une
-# SEULE caméra (main qui retire une fléchette, ombre, trou laissé par une
-# pointe…) n'est plus scoré — il faut une vraie fléchette vue par ≥2 cams au
-# même endroit. Mettre à 1 si une cam est souvent occultée et que de vrais
-# lancers ne sont vus que par une seule (au prix du retour des faux positifs).
+# Nombre de caméras distinctes attendues pour scorer un lancer AUTOMATIQUEMENT.
+# À 2 (recommandé sur 3 cams) : un lancer vu par une SEULE caméra (souvent un
+# blob parasite : main au retrait, ombre, trou de pointe) n'est pas scoré tout
+# seul → il passe "à confirmer" (cf. REQUIRE_CONFIRM ci-dessous) plutôt que
+# rejeté. Mettre à 1 pour scorer direct dès une seule cam (au risque de faux
+# positifs si REQUIRE_CONFIRM est aussi désactivé).
 FUSION_MIN_CAMS = 2
+
+# Score "à confirmer" plutôt que jeté ou compté en aveugle. Un lancer vu par
+# moins de FUSION_MIN_CAMS caméras OU dont la confiance de fusion est sous ce
+# seuil n'est PAS scoré automatiquement : il est proposé à l'écran (1 clic pour
+# valider, sinon ignoré). Réconcilie "ne pas perdre un vrai lancer" et "ne pas
+# compter un parasite". Mettre REQUIRE_CONFIRM=False pour scorer quand même
+# automatiquement (ancien comportement, au risque de faux positifs).
+REQUIRE_CONFIRM = True
+CONFIRM_BELOW_CONFIDENCE = 0.55
+# Si personne ne valide/rejette un lancer incertain dans ce délai, on l'auto-
+# rejette et la détection reprend (le lancer reste ajoutable à la main).
+CONFIRM_TIMEOUT_S = 25.0
 
 FUSION_AGREE_DIST = 40        # Max px distance to consider "same dart"
 # 1200ms : les cams se stabilisent à des moments différents (STABLE_FRAMES

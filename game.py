@@ -8,6 +8,71 @@ from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
 
+def _double_label(rem: int) -> str:
+    """Label du double qui ferme `rem` (rem pair 2..40, ou 50 = double bull)."""
+    return "BULL" if rem == 50 else f"D{rem // 2}"
+
+
+def _is_double_finish(rem: int) -> bool:
+    """`rem` peut-il être fermé par UNE fléchette double-out ?"""
+    return rem == 50 or (2 <= rem <= 40 and rem % 2 == 0)
+
+
+def _scoring_throws():
+    """Fléchettes amont possibles (hors finition), des plus 'propres' aux moins
+    courantes : gros triples d'abord → routes proches des finitions standard."""
+    opts = [(3 * n, f"T{n}") for n in range(20, 0, -1)]
+    opts.append((50, "BULL"))
+    opts += [(2 * n, f"D{n}") for n in range(20, 0, -1)]
+    opts.append((25, "25"))
+    opts += [(n, f"S{n}") for n in range(20, 0, -1)]
+    return opts
+
+
+_SCORING_THROWS = _scoring_throws()
+
+# Confort des doubles de finition (plus haut = préféré) : on suit la logique
+# usuelle D20 → D16 → D8 → D4 → D2 (route 'halving'), puis bull et les doubles
+# pairs courants. Sert à choisir LA route 2 fléchettes la plus naturelle.
+_DOUBLE_RANK = {40: 100, 32: 95, 16: 90, 8: 85, 4: 80, 2: 75, 50: 70,
+                24: 65, 20: 64, 36: 62, 28: 60, 12: 58}
+
+
+def _double_rank(rem: int) -> int:
+    return _DOUBLE_RANK.get(rem, 40 if (rem // 2) % 2 == 0 else 20)
+
+
+def compute_checkout(score: int):
+    """UNE route de checkout (liste de labels) pour `score`, ou [] si hors de
+    2..170 ou non finissable en double-out (bogey : 159/162/163/165/166/168/169).
+
+    Routes valides et proches des finitions usuelles. Ce n'est pas toujours la
+    route 'pro' canonique mais une fermeture légale en ≤ 3 fléchettes terminée
+    par un double."""
+    if score < 2 or score > 170:
+        return []
+    if _is_double_finish(score):                      # 1 fléchette
+        return [_double_label(score)]
+    # 2 fléchettes : amont SIMPLE ou TRIPLE d'abord (on ne joue pas un double/
+    # bull comme fléchette de mise en place : trop risqué), puis on maximise le
+    # confort du double de finition. -> 60: S20 D20 · 80: T16 D16 · 70: T10 D20.
+    first_class = {"S": 2, "T": 2, "B": 1, "2": 1, "D": 0}  # 1re lettre du label
+    best, best_key = None, (-1, -1)
+    for v1, l1 in _SCORING_THROWS:
+        rem = score - v1
+        if _is_double_finish(rem):
+            key = (first_class.get(l1[0], 0), _double_rank(rem))
+            if key > best_key:
+                best, best_key = [l1, _double_label(rem)], key
+    if best is not None:
+        return best
+    for v1, l1 in _SCORING_THROWS:                    # 3 fléchettes (T20 d'abord)
+        for v2, l2 in _SCORING_THROWS:
+            if _is_double_finish(score - v1 - v2):
+                return [l1, l2, _double_label(score - v1 - v2)]
+    return []
+
+
 @dataclass
 class Throw:
     label: str
@@ -79,18 +144,8 @@ class Player:
         return chips
 
     def checkout_routes(self) -> List[str]:
-        """Simple checkout suggestions for scores <= 170."""
-        s = self.score
-        if s > 170 or s <= 1:
-            return []
-        routes = []
-        if s == 50:
-            routes.append("BULL")
-        elif s <= 40 and s % 2 == 0:
-            routes.append(f"D{s // 2}")
-        elif s <= 60 and s > 40:
-            routes.append(f"S{s - 40} → D20")
-        return routes
+        """Route de checkout (liste de labels) pour le score courant, ou []."""
+        return compute_checkout(self.score)
 
 
 class GameEngine:
@@ -393,9 +448,14 @@ class GameEngine:
         self.current_player_idx = (self.current_player_idx + 1) % len(self.players)
         if self.current_player_idx == 0:
             self.turn_number += 1
+        nxt = self.current_player
         self._notify("player_change", {
             "pid": self.current_player_idx,
-            "name": self.current_player.name,
+            "name": nxt.name,
+            # Score restant + route de checkout : permet l'annonce vocale du
+            # finish et un éventuel affichage au changement de joueur.
+            "score": nxt.score,
+            "checkout": nxt.checkout_routes() if self.mode in ("501", "301") else [],
         })
 
     def _build_game_over_payload(self) -> dict:

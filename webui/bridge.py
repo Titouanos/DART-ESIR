@@ -47,6 +47,8 @@ class Controller(Protocol):
     def cancel_takeout(self) -> None: ...
     def manual_throw(self, number: int, multiplier: int) -> None: ...
     def correct_last(self, number: int, multiplier: int) -> None: ...
+    def confirm_pending(self) -> None: ...
+    def reject_pending(self) -> None: ...
 
 
 # Throttling minimum entre deux pushes `system_status` quand seules
@@ -87,6 +89,12 @@ class Bridge:
             self._led_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         except Exception:
             self._led_sock = None
+
+        # État voix (annonce vocale), piloté depuis l'UI. La config est aussi
+        # poussée au service d'annonce en UDP (audio_config) ; l'UI la reflète
+        # via l'event WS audio_state. enabled coupe toutes les annonces de jeu.
+        self._audio_enabled = True
+        self._audio_volume = 80   # 0..100
 
     # =================================================================
     # CYCLE DE VIE
@@ -136,6 +144,12 @@ class Bridge:
         phases de takeout (takeout_start / takeout_end)."""
         self._emit_led(event_type, payload or {})
 
+    def notify_clients(self, event_type: str, payload: dict = None) -> None:
+        """Point d'entrée public pour que le contrôleur pousse un event WS
+        arbitraire aux clients (ex. pending_throw / pending_cleared pour la
+        confirmation de lancer incertain). Ne passe pas par le GameEngine."""
+        self._broadcast(event_type, payload or {})
+
     def _emit_led(self, event_type: str, payload: dict) -> None:
         """Envoie l'event en UDP aux services périphériques (LED + audio).
         Best-effort, jamais bloquant."""
@@ -149,6 +163,20 @@ class Bridge:
                 sock.sendto(msg, addr)
         except Exception:
             pass  # pas de listener / erreur réseau → on ignore
+
+    def _push_audio_config(self) -> None:
+        """Envoie la config voix au service d'annonce (UDP :9877) et diffuse
+        l'état aux clients WS pour que l'UI reflète le réglage courant."""
+        sock = getattr(self, "_led_sock", None)
+        cfg = {"enabled": self._audio_enabled, "volume": self._audio_volume}
+        if sock is not None:
+            try:
+                msg = json.dumps({"type": "audio_config", "payload": cfg},
+                                 separators=(",", ":")).encode("utf-8")
+                sock.sendto(msg, ("127.0.0.1", 9877))
+            except Exception:
+                pass
+        self._broadcast("audio_state", cfg)
 
     # =================================================================
     # BROADCAST THREAD-SAFE
@@ -209,6 +237,15 @@ class Bridge:
                     separators=(",", ":"), default=str))
             except Exception:
                 pass
+        # État voix courant, pour que les contrôles UI affichent le bon réglage.
+        try:
+            await ws.send_text(json.dumps(
+                {"type": "audio_state", "ts": time.time(),
+                 "payload": {"enabled": self._audio_enabled,
+                             "volume": self._audio_volume}},
+                separators=(",", ":"), default=str))
+        except Exception:
+            pass
 
     def unregister_subscriber(self, ws: WebSocket) -> None:
         with self._sub_lock:
@@ -330,6 +367,26 @@ class Bridge:
                 # Déclenche une annonce de test (service vocal séparé, UDP).
                 self._emit_led("test_audio", {})
                 return {"ok": True, "msg": "Test audio lancé"}
+
+            if cmd == "toggle_audio":
+                self._audio_enabled = not self._audio_enabled
+                self._push_audio_config()
+                return {"ok": True, "enabled": self._audio_enabled}
+
+            if cmd == "set_volume":
+                lvl = int(payload.get("level", self._audio_volume))
+                self._audio_volume = max(0, min(100, lvl))
+                self._push_audio_config()
+                return {"ok": True, "volume": self._audio_volume}
+
+            if cmd in ("confirm_pending", "reject_pending"):
+                if self._controller is None:
+                    return {"ok": False, "msg": "Controller non attaché"}
+                if cmd == "confirm_pending":
+                    self._controller.confirm_pending()
+                else:
+                    self._controller.reject_pending()
+                return {"ok": True}
 
             if cmd in ("manual_throw", "correct_last"):
                 if self._controller is None:
